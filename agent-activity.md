@@ -4,6 +4,40 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Milestone (a) implemented: Noise_XX handshake + device cert issuance
+
+- Created a `dev` branch (`git checkout -b dev`) per the confirmed `main`=production/`dev`=active-development branch model, before starting implementation work.
+- Revised `shared-proto/proto/device.proto`: dropped `device_public_key` from `EnrollmentRequest` (the Noise handshake itself authenticates the initiator's key, so trusting a client-supplied value would be redundant/weaker) and `workspace_public_key` from `EnrollmentResponse` (unused while cert integrity is HMAC-based, not asymmetric).
+- Added Noise/framing/cert helper modules to `shared-proto`:
+  - `shared-proto/Cargo.toml` — added `snow`, `tokio` (`io-util` feature), `anyhow`, `hmac`, `sha2`.
+  - `shared-proto/src/framing.rs` — `write_frame`/`read_frame`, u32-big-endian length-prefixed framing over any `AsyncRead`/`AsyncWrite`.
+  - `shared-proto/src/noise.rs` — `handshake_initiator`/`handshake_responder` implementing the 3-message `Noise_XX_25519_ChaChaPoly_SHA256` handshake by hand over the framing helpers, plus `send_message`/`recv_message` to encrypt/decrypt-and-frame arbitrary `prost::Message` types over the resulting `TransportState`.
+  - `shared-proto/src/cert.rs` — `sign_certificate`/`verify_certificate` using HMAC-SHA256 (via the `hmac`/`sha2` crates) over the `DeviceCertificate` proto message with its `workspace_signature` field cleared, keyed by the workspace's private key. Documented in-code as a PoC-grade integrity check (only the issuing server can verify it), not a public-key signature — flagged for revisiting with a real asymmetric scheme (e.g. ed25519) once other parties need to verify a cert offline.
+  - `shared-proto/src/lib.rs` — added `pub mod cert; pub mod framing; pub mod noise;` alongside the existing prost-generated include.
+- Implemented the server side:
+  - `server/Cargo.toml` — removed the now-unused direct `snow` dependency; added `anyhow`, `uuid` (`v4` feature), `rand`, `hex`.
+  - `server/src/workspace.rs` (new) — placeholder single-workspace config loaded from env vars (`WORKSPACE_ID`, `WORKSPACE_ENROLLMENT_TOKEN`, `WORKSPACE_PRIVATE_KEY_HEX`), generating an ephemeral random workspace key and logging a warning if the env vars aren't set (dev-only default token `dev-enrollment-token`). Explicitly commented as a stand-in for the future Postgres-backed Workspace Manager.
+  - `server/src/device_channel.rs` (new) — `run()` binds a TCP listener (default `0.0.0.0:7777`) separate from the Axum admin API, spawning a task per connection; `handle_enrollment()` runs the responder handshake, reads the authenticated remote static key as the device's public key, receives the `EnrollmentRequest`, validates the enrollment token, generates a `device_id` (`uuid::Uuid::new_v4`), builds and signs a `DeviceCertificate`, and sends back an `EnrollmentResponse`.
+  - `server/src/main.rs` — rewrote to run the Axum admin API (`/healthz` on `:8080`) and the new device channel concurrently via `tokio::spawn` + `tokio::select!`, returning `anyhow::Result<()>`.
+- Implemented the client side:
+  - `client/Cargo.toml` — added `anyhow`, `hostname`.
+  - `client/src/identity.rs` (new) — `load_or_generate()` persists a device X25519 identity keypair to `device-identity/identity.key` (relative to CWD — noted in-code as a PoC placeholder, to be replaced with a proper per-OS app-data path once this becomes a real installed service); `save_certificate()` writes the received `DeviceCertificate` to `device-identity/device_cert.bin` as raw encoded protobuf bytes.
+  - `client/src/main.rs` — rewrote to connect to `SERVER_ADDR` (env, default `127.0.0.1:7777`), run the initiator handshake, send an `EnrollmentRequest` (token from `WORKSPACE_ENROLLMENT_TOKEN` env, real hostname via the `hostname` crate, `os_version` via `std::env::consts::OS`), receive and persist the certificate.
+- Built and verified in WSL2 (Ubuntu, Linux target):
+  ```bash
+  wsl -d Ubuntu -- bash -c "cargo build -p server -p shared-proto"   # succeeded
+  wsl -d Ubuntu -- bash -c "cargo build -p client"                    # succeeded (windows-service is cfg-gated out on non-Windows)
+  ```
+  Ran a full loopback enrollment test (server backgrounded with `setsid nohup ... & disown` — a plain `&` didn't survive across separate `wsl.exe` invocations, since the parent bash session tears down its job group each call):
+  ```bash
+  ./target/debug/server &   # (via setsid nohup, see above)
+  ./target/debug/client
+  ```
+  Result: client logged `Noise_XX handshake complete` → `enrollment successful device_id=e5446ac8-... workspace_id=default-workspace` → `device certificate persisted path="device-identity/device_cert.bin"`; server logged a matching `device enrolled device_id="e5446ac8-..." hostname=whitesnow os_version=linux`. Confirmed `device-identity/device_cert.bin` (131 bytes) and `identity.key` (32 bytes) were written; inspected the cert bytes with `xxd` to confirm it's real encoded protobuf data (device_id string and binary key/signature material visible).
+- Synced the updated `shared-proto`, `client`, and `server` crates to `lab1` via `scp` (Windows-style destination paths, e.g. `sysadmin@100.105.95.89:C:/dev/nano-stack-7/`) and built both `client` and `server` there (`cargo build -p client`, `cargo build -p server`) — both succeeded, pulling in the same new dependencies for the MSVC target.
+- Ran a second full enrollment test natively on Windows (`lab1`, both `client.exe` and `server.exe`): first attempt failed with `Error: No connection could be made because the target machine actively refused it` because the server process, started via `Start-Process` in one SSH command, was killed when that SSH session's process/job tree tore down before the client connected in a later, separate SSH command. Fixed by starting the server and running the client within a single SSH session/command so the server stayed alive for the test's duration. Result: identical success — `enrollment successful device_id=f1e7748f-... workspace_id=default-workspace`, server-side log confirmed `device enrolled ... hostname=lab1 os_version=windows`.
+- Cleaned up test artifacts: stopped the background server processes (WSL2: `pkill -f target/debug/server`; lab1: `Stop-Process -Name server -Force`), removed `server-out.log`/`server-err.log`/`device-identity/` on `lab1`.
+
 ### Agent activity log tooling itself
 
 - Created `C:\workspace\ai-skills\.claude\skills\agent-activity-log\SKILL.md` defining this file's standing requirement across all projects.

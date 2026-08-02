@@ -1,24 +1,31 @@
+mod device_channel;
+mod workspace;
+
 use axum::{routing::get, Router};
-use shared_proto::EnrollmentRequest;
+use std::sync::Arc;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    // Sanity check that shared-proto codegen links and constructs correctly.
-    let sample = EnrollmentRequest {
-        workspace_enrollment_token: "placeholder".into(),
-        device_public_key: vec![],
-        hostname: "placeholder-host".into(),
-        os_version: "placeholder-os".into(),
-    };
-    tracing::debug!(?sample, "shared-proto wired up");
+    let workspace = Arc::new(workspace::load());
 
+    let admin_api = tokio::spawn(run_admin_api());
+    let device_channel = tokio::spawn(device_channel::run(workspace, "0.0.0.0:7777"));
+
+    tokio::select! {
+        res = admin_api => { res??; }
+        res = device_channel => { res??; }
+    }
+
+    Ok(())
+}
+
+async fn run_admin_api() -> anyhow::Result<()> {
     let app = Router::new().route("/healthz", get(|| async { "ok" }));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
-        .await
-        .expect("failed to bind admin API listener");
-    tracing::info!("server listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await.expect("server error");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    tracing::info!("admin API listening on {}", listener.local_addr()?);
+    axum::serve(listener, app).await?;
+    Ok(())
 }

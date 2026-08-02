@@ -7,8 +7,11 @@ edition.workspace = true
 shared-proto = { path = "../shared-proto" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
-snow = "0.9"
 prost = "0.13"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+hex = "0.4"

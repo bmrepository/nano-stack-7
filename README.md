@@ -317,15 +317,24 @@ All open decisions from the previous draft have been confirmed:
 
 Repo/workspace layout: a single Cargo workspace in the single `nano-stack-7` repo, with `server/`, `client/`, and `shared-proto/` member crates, plus a `deploy/` directory for the Portainer-tracked stack definition (see Section 13.1). Dev work happens on the `dev` branch; `main` is the production/deployable branch.
 
-| # | Milestone | Notes |
-|---|---|---|
-| a | Noise_XX handshake + device cert issuance | Establishes the enrollment flow and workspace-signed device identity — the trust foundation everything else depends on. |
-| b | Inventory collection + check-in to server | Client daemon gathers basic device/software inventory over Noise_IK sessions on the scheduler cadence. |
-| c | One hardcoded patch-management finding rule | Rule-based (not AI-driven) — detects one outdated app as a stand-in for the eventual AI vulnerability/performance plugins. |
-| d | Consent IPC | Tray/notification helper prompts the user, decision + outcome logged as an audit trail entry. |
-| e | Remediation action | Executes the actual patch via Winget for the flagged app. Target app not pre-selected — pick any small, safe Winget-packaged app (e.g. 7-Zip, Notepad++) when this milestone is reached. |
+| # | Milestone | Status | Notes |
+|---|---|---|---|
+| a | Noise_XX handshake + device cert issuance | ✅ Implemented 2026-08-02 | Establishes the enrollment flow and workspace-signed device identity — the trust foundation everything else depends on. See 11.1.1 for implementation notes. |
+| b | Inventory collection + check-in to server | Not started | Client daemon gathers basic device/software inventory over Noise_IK sessions on the scheduler cadence. |
+| c | One hardcoded patch-management finding rule | Not started | Rule-based (not AI-driven) — detects one outdated app as a stand-in for the eventual AI vulnerability/performance plugins. |
+| d | Consent IPC | Not started | Tray/notification helper prompts the user, decision + outcome logged as an audit trail entry. |
+| e | Remediation action | Not started | Executes the actual patch via Winget for the flagged app. Target app not pre-selected — pick any small, safe Winget-packaged app (e.g. 7-Zip, Notepad++) when this milestone is reached. |
 
 **Definition of done for the PoC:** runs and is demoable end-to-end on the dedicated Windows 11 dev/test box (Section 13.3), talking to the server stack running via WSL2/Podman or the LAN Portainer host. No installer/packaging polish required at this stage (see Section 13).
+
+#### 11.1.1 Milestone (a) implementation notes
+
+- **Wire protocol**: `shared-proto` implements the 3-message `Noise_XX_25519_ChaChaPoly_SHA256` handshake by hand over a simple u32-length-prefixed TCP framing (`shared-proto::framing`, `shared-proto::noise`). The device channel runs on its own TCP listener (`:7777`), separate from the Axum admin API (`:8080`).
+- **Key roles**: matches the Refined Key Hierarchy in Section 5 exactly — the server's Noise static key *for the enrollment handshake* is the workspace's private key; the client's static key is a locally-generated, persisted device identity keypair. The server never trusts a client-supplied public key in the request payload — it reads the authenticated key straight from the completed handshake's remote static key.
+- **Cert integrity is HMAC-based, not asymmetric, for now**: `DeviceCertificate.workspace_signature` is an HMAC-SHA256 over the cert (with the signature field cleared), keyed by the workspace's private key. This is a deliberate PoC simplification — only the issuing server can verify it. Revisit with a real asymmetric signature (e.g. ed25519) if/when another party needs to verify a certificate offline.
+- **Workspace config is a placeholder**: `server/src/workspace.rs` loads a single workspace from env vars (`WORKSPACE_ID`, `WORKSPACE_ENROLLMENT_TOKEN`, `WORKSPACE_PRIVATE_KEY_HEX`), generating an ephemeral random key with a logged warning if unset. This stands in for the real Postgres-backed Workspace Manager (Section 4.1) — devices enrolled against an ephemeral key won't be recognized after a server restart until that lands.
+- **Client identity storage is a placeholder path**: `client/src/identity.rs` persists to `./device-identity/` relative to the working directory. Needs to move to a proper per-OS app-data location before this becomes a real installed service.
+- **Verified**: full enrollment loop (handshake → token validation → cert issuance → client-side persistence) tested end-to-end both in WSL2 (Linux) and natively on `lab1` (Windows/MSVC).
 
 ---
 

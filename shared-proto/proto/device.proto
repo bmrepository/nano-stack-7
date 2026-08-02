@@ -2,13 +2,15 @@ syntax = "proto3";
 package nano_stack_7;
 
 // Milestone (a): Noise_XX handshake + device cert issuance.
-// Fields are a first-pass placeholder and expected to evolve as enrollment is implemented.
 
 message EnrollmentRequest {
     string workspace_enrollment_token = 1;
-    bytes device_public_key = 2;
-    string hostname = 3;
-    string os_version = 4;
+    string hostname = 2;
+    string os_version = 3;
+    // device_public_key is intentionally omitted: the Noise_XX handshake
+    // itself proves the initiator controls the corresponding private key,
+    // so the server reads it from the handshake's remote static key rather
+    // than trusting a client-supplied value here.
 }
 
 message DeviceCertificate {
@@ -16,10 +18,14 @@ message DeviceCertificate {
     bytes device_public_key = 2;
     string workspace_id = 3;
     int64 issued_at_unix = 4;
+    // HMAC-SHA256 over this message with workspace_signature cleared,
+    // keyed by the workspace's private key. A PoC-grade integrity check,
+    // not a public-key signature — only the issuing server can verify it.
+    // Revisit with a real asymmetric signature (e.g. ed25519) once other
+    // parties need to verify a certificate offline.
     bytes workspace_signature = 5;
 }
 
 message EnrollmentResponse {
     DeviceCertificate certificate = 1;
-    bytes workspace_public_key = 2;
 }
