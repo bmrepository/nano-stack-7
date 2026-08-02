@@ -321,9 +321,9 @@ Repo/workspace layout: a single Cargo workspace in the single `nano-stack-7` rep
 |---|---|---|---|
 | a | Noise_XX handshake + device cert issuance | ✅ Implemented 2026-08-02 | Establishes the enrollment flow and workspace-signed device identity — the trust foundation everything else depends on. See 11.1.1 for implementation notes. |
 | b | Inventory collection + check-in to server | ✅ Implemented 2026-08-02 | Client daemon gathers basic device/software inventory over Noise_IK sessions on the scheduler cadence. See 11.1.2 for implementation notes. |
-| c | One hardcoded patch-management finding rule | Not started | Rule-based (not AI-driven) — detects one outdated app as a stand-in for the eventual AI vulnerability/performance plugins. |
+| c | One hardcoded patch-management finding rule | ✅ Implemented 2026-08-02 | Rule-based (not AI-driven) — detects one outdated app as a stand-in for the eventual AI vulnerability/performance plugins. See 11.1.3 for implementation notes. |
 | d | Consent IPC | Not started | Tray/notification helper prompts the user, decision + outcome logged as an audit trail entry. |
-| e | Remediation action | Not started | Executes the actual patch via Winget for the flagged app. Target app not pre-selected — pick any small, safe Winget-packaged app (e.g. 7-Zip, Notepad++) when this milestone is reached. |
+| e | Remediation action | Not started | Executes the actual patch via Winget for the flagged app. Target app: **App Installer** (picked in milestone (c) — already present with a genuine available update, no new install needed for the demo). |
 
 **Definition of done for the PoC:** runs and is demoable end-to-end on the dedicated Windows 11 dev/test box (Section 13.3), talking to the server stack running via WSL2/Podman or the LAN Portainer host. No installer/packaging polish required at this stage (see Section 13).
 
@@ -344,6 +344,13 @@ Repo/workspace layout: a single Cargo workspace in the single `nano-stack-7` rep
 - **Client behavior**: on startup, the client checks `identity::is_enrolled()` (cert + workspace pubkey both persisted) and enrolls only if needed, then runs a `tokio::time::interval` scheduler performing one Noise_IK check-in per tick (`CHECKIN_INTERVAL_SECS` env, default 1800s/30min per Section 4.2).
 - **Inventory collection**: hostname + OS (reused from enrollment) plus an installed-app list. On Windows this shells out to `winget list --accept-source-agreements --disable-interactivity` and loosely parses the table output; non-Windows returns an empty list (Winget doesn't exist there, and this project is Windows-first — see Section 10). Real bug hit and fixed during testing: `winget list` prompts interactively for MS Store source terms-of-transaction on first use, which fails outright in a non-interactive session — `--accept-source-agreements` avoids the prompt. Caught by testing against real `winget` output on `lab1`, not just the Linux/WSL2 path (which never exercises this branch, since it's `#[cfg(windows)]`).
 - **Verified**: full loop (enroll only if needed → periodic Noise_IK check-in → real inventory data, 86 installed apps detected on `lab1`) tested end-to-end on both WSL2 and natively on `lab1`.
+
+#### 11.1.3 Milestone (c) implementation notes
+
+- **Where it runs**: server-side, in `server/src/finding.rs`, evaluated against the `DeviceInventory` received on each check-in and returned in `CheckInResponse.findings` (new field). Matches the doc's Plugin Manager model better than client-side evaluation would — findings logic can become config-driven per workspace later without touching the client.
+- **The one hardcoded rule**: flags **App Installer** (`Microsoft.AppInstaller`) specifically, hardcoded recommended version `1.29.280.0`, using a simple dotted-numeric version comparison (`is_older`, unit-tested in `server/src/finding.rs`). App Installer was picked because it's present by default on Windows 11 and — confirmed directly via `winget list` on `lab1` — winget itself already reports a real available update for it (`1.29.279.0` → `1.29.280.0`), so the finding fires against genuine data with no need to install a demo app. This also fixes milestone (e)'s previously-open "target app not pre-selected" question — it's now App Installer.
+- **Both client and server log findings**: the server logs `finding detected` when a check-in triggers the rule; the client logs a `finding: ...` warning with the same details after receiving the response. Detection only for now — milestone (d) turns this into an actual consent prompt.
+- **Verified**: confirmed on `lab1` — `finding_count=1`, correctly reporting `App Installer is outdated (installed 1.29.279.0, recommended 1.29.280.0)`, consistently across repeated check-in cycles.
 
 ---
 

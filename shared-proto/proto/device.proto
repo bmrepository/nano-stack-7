@@ -47,4 +47,15 @@ message DeviceInventory {
 message CheckInResponse {
     bool accepted = 1;
     int64 server_time_unix = 2;
+    repeated Finding findings = 3;
+}
+
+// Milestone (c): one hardcoded patch-management finding rule.
+
+message Finding {
+    string plugin_id = 1;
+    string app_name = 2;
+    string installed_version = 3;
+    string recommended_version = 4;
+    string description = 5;
 }

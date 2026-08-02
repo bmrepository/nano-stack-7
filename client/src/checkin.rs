@@ -20,7 +20,22 @@ pub async fn run_once(server_addr: &str, identity_key: &[u8], workspace_public_k
     tracing::info!(
         installed_app_count = inventory.installed_apps.len(),
         server_time_unix = response.server_time_unix,
+        finding_count = response.findings.len(),
         "check-in successful"
     );
+
+    // Milestone (c): detection only — surfacing findings here for now.
+    // Milestone (d) turns these into an actual consent prompt.
+    for f in &response.findings {
+        tracing::warn!(
+            plugin_id = %f.plugin_id,
+            app = %f.app_name,
+            installed = %f.installed_version,
+            recommended = %f.recommended_version,
+            "finding: {}",
+            f.description
+        );
+    }
+
     Ok(())
 }

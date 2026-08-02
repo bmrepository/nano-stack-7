@@ -1,5 +1,6 @@
 mod checkin_channel;
 mod device_channel;
+mod finding;
 mod registry;
 mod workspace;
 

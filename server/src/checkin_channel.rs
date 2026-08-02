@@ -49,6 +49,18 @@ async fn handle_checkin(mut stream: TcpStream, workspace: &WorkspaceConfig, regi
         "check-in received"
     );
 
+    let findings = crate::finding::evaluate(&inventory);
+    for f in &findings {
+        tracing::info!(
+            device_id = %existing_cert.device_id,
+            plugin_id = %f.plugin_id,
+            app = %f.app_name,
+            installed = %f.installed_version,
+            recommended = %f.recommended_version,
+            "finding detected"
+        );
+    }
+
     let server_time_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
@@ -59,6 +71,7 @@ async fn handle_checkin(mut stream: TcpStream, workspace: &WorkspaceConfig, regi
         &CheckInResponse {
             accepted: true,
             server_time_unix,
+            findings,
         },
     )
     .await?;

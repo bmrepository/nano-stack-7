@@ -4,6 +4,28 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Milestone (c) implemented: one hardcoded patch-management finding rule
+
+- Checked what's actually installed on `lab1` before hardcoding a target app, to avoid picking one that would need a fresh install just for the demo:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519_lab1 sysadmin@100.105.95.89 "winget list --accept-source-agreements --disable-interactivity 2>&1 | Select-String -Pattern '7-Zip|7zip'"   # not installed
+  ssh -i ~/.ssh/id_ed25519_lab1 sysadmin@100.105.95.89 "winget list --accept-source-agreements --disable-interactivity 2>&1 | Select-String -Pattern 'Notepad'"     # only Windows Notepad (MSIX), not Notepad++
+  ```
+  Recalled from milestone (b)'s earlier `winget list` inspection that **App Installer** (`Microsoft.AppInstaller`) was present with a real available update reported by winget itself (`1.29.279.0` → `1.29.280.0`) — picked this as the hardcoded target instead, since it needs no new install and fires against genuine outdated-version data. This also resolves milestone (e)'s previously-open "target app not pre-selected" question.
+- Extended `shared-proto/proto/device.proto`: added a `Finding` message (`plugin_id`, `app_name`, `installed_version`, `recommended_version`, `description`) and a `repeated Finding findings = 3` field on `CheckInResponse`.
+- Added `server/src/finding.rs` (new): `evaluate(inventory: &DeviceInventory) -> Vec<Finding>` — hardcoded constants `TARGET_APP_NAME = "App Installer"`, `RECOMMENDED_VERSION = "1.29.280.0"`, `PLUGIN_ID = "app-patch-management-poc"`; `is_older()` does a simple dotted-numeric version comparison. Included a unit test (`detects_older_version`) covering older/equal/newer cases.
+- Updated `server/src/checkin_channel.rs`: calls `finding::evaluate()` on the received inventory, logs each finding (`finding detected`), and includes them in the `CheckInResponse`.
+- Updated `server/src/main.rs`: added `mod finding;`.
+- Updated `client/src/checkin.rs`: logs a `finding: ...` warning for each finding in the response (`finding_count` also added to the existing `check-in successful` log line). Detection/logging only for now — commented in-code that milestone (d) turns this into an actual consent prompt.
+- Built and tested:
+  ```bash
+  wsl -d Ubuntu -- bash -c "cargo build --workspace --exclude client"   # shared-proto + server, succeeded
+  wsl -d Ubuntu -- bash -c "cargo test -p server"                        # `finding::tests::detects_older_version ... ok`
+  wsl -d Ubuntu -- bash -c "cargo build -p client"                       # succeeded
+  ```
+  Synced to `lab1` (`scp` for `shared-proto`, `server`, `client`) and built (`cargo build --workspace` — succeeded). Ran a native Windows end-to-end test (server + client together in one SSH session, `CHECKIN_INTERVAL_SECS=5`): confirmed `finding_count=1` on both the client (`check-in successful ... finding_count=1`, followed by `finding: App Installer is outdated (installed 1.29.279.0, recommended 1.29.280.0)`) and the server (`finding detected ... app=App Installer installed=1.29.279.0 recommended=1.29.280.0`), consistently across two check-in cycles.
+- Cleaned up: stopped the test server (`Stop-Process -Name server -Force`), removed `server-out.log`/`server-err.log`/`device-identity/` on `lab1`.
+
 ### Milestone (b) implemented: inventory collection + check-in over Noise_IK
 
 - Extended `shared-proto/proto/device.proto`: added `InstalledApp`, `DeviceInventory`, `CheckInResponse` messages.
