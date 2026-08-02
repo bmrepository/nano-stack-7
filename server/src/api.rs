@@ -1,15 +1,18 @@
+use crate::auth::{AuthStore, RequireAuth};
 use crate::registry::Registry;
 use crate::workspace::WorkspaceConfig;
 use axum::extract::State;
-use axum::routing::get;
+use axum::http::StatusCode;
+use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ApiState {
     pub workspace: Arc<WorkspaceConfig>,
     pub registry: Arc<Registry>,
+    pub auth: Arc<AuthStore>,
 }
 
 #[derive(Serialize)]
@@ -39,14 +42,74 @@ struct WorkspaceDto {
     device_count: usize,
 }
 
+#[derive(Serialize)]
+struct AuthStatusDto {
+    admin_exists: bool,
+}
+
+#[derive(Serialize)]
+struct SessionDto {
+    token: String,
+}
+
+#[derive(Deserialize)]
+struct SetupRequest {
+    username: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct LoginRequest {
+    username: String,
+    password: String,
+}
+
 pub fn router(state: ApiState) -> Router {
     Router::new()
+        .route("/api/auth/status", get(auth_status))
+        .route("/api/auth/setup", post(auth_setup))
+        .route("/api/auth/login", post(auth_login))
         .route("/api/devices", get(list_devices))
         .route("/api/workspace", get(get_workspace))
         .with_state(state)
 }
 
-async fn list_devices(State(state): State<ApiState>) -> Json<Vec<DeviceDto>> {
+async fn auth_status(State(state): State<ApiState>) -> Json<AuthStatusDto> {
+    Json(AuthStatusDto {
+        admin_exists: state.auth.admin_exists(),
+    })
+}
+
+async fn auth_setup(
+    State(state): State<ApiState>,
+    Json(body): Json<SetupRequest>,
+) -> Result<Json<SessionDto>, (StatusCode, &'static str)> {
+    if body.username.trim().is_empty() || body.password.len() < 8 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "username required; password must be at least 8 characters",
+        ));
+    }
+
+    state
+        .auth
+        .create_admin(body.username, &body.password)
+        .map(|token| Json(SessionDto { token }))
+        .map_err(|e| (StatusCode::CONFLICT, e))
+}
+
+async fn auth_login(
+    State(state): State<ApiState>,
+    Json(body): Json<LoginRequest>,
+) -> Result<Json<SessionDto>, (StatusCode, &'static str)> {
+    state
+        .auth
+        .verify_login(&body.username, &body.password)
+        .map(|token| Json(SessionDto { token }))
+        .ok_or((StatusCode::UNAUTHORIZED, "invalid username or password"))
+}
+
+async fn list_devices(State(state): State<ApiState>, _auth: RequireAuth) -> Json<Vec<DeviceDto>> {
     let devices = state
         .registry
         .list()
@@ -75,7 +138,7 @@ async fn list_devices(State(state): State<ApiState>) -> Json<Vec<DeviceDto>> {
     Json(devices)
 }
 
-async fn get_workspace(State(state): State<ApiState>) -> Json<WorkspaceDto> {
+async fn get_workspace(State(state): State<ApiState>, _auth: RequireAuth) -> Json<WorkspaceDto> {
     Json(WorkspaceDto {
         workspace_id: state.workspace.workspace_id.clone(),
         // Never expose the actual token/private key — just whether a

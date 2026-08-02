@@ -4,6 +4,23 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Portainer-style admin auth + client tray icon
+
+- Added `server/src/auth.rs` (new): `AuthStore` (in-memory, no DB yet) — `admin_exists()`, `create_admin()` (double-checked-locking to close a race between concurrent setup calls, `bcrypt` password hashing), `verify_login()`, `is_valid_session()`; a `RequireAuth` axum extractor gating handlers behind a valid `Authorization: Bearer <token>` header.
+- Added `bcrypt = "0.15"` to `server/Cargo.toml`.
+- Updated `server/src/api.rs`: added `GET /api/auth/status`, `POST /api/auth/setup`, `POST /api/auth/login`; `list_devices`/`get_workspace` now require `RequireAuth`. `ApiState` gained an `auth: Arc<AuthStore>` field.
+- Updated `server/src/main.rs`: constructs and threads through the `AuthStore`.
+- **Bug hit and fixed**: first build failed with `error[E0195]: lifetime parameters or bounds on associated function 'from_request_parts' do not match the trait declaration` — axum-core 0.4.x's `FromRequestParts` trait still uses `#[async_trait]` internally, so implementors need the same macro for the lifetimes to line up. Fixed by adding `#[axum::async_trait]` to the `RequireAuth` impl.
+- Added frontend auth flow: `admin-console/src/auth.ts` (localStorage token get/set/clear), `pages/Setup.tsx` (first-run account creation, auto-login), `pages/Login.tsx`; `api.ts` now attaches the bearer token to requests and clears it on a 401; `App.tsx` gates on `/api/auth/status` + token validity (`loading` → `setup` | `login` | `authenticated`), added a sidebar "Log out" button. New CSS for `.auth-screen`/`.auth-card`/`.logout-button`.
+- Built (`podman-compose build server`) — one real compile error (the axum lifetime issue above), fixed, rebuilt successfully. Recreated the container (`podman-compose up -d --force-recreate server`) and verified via `curl`: fresh `admin_exists:false`, `/api/devices` without a token → 401, `/api/auth/setup` → 200 + token, repeat setup → 409, wrong-password login → 401, correct login → 200 + token (confirmed reliable over 5 consecutive attempts after one transient failure right after container recreation, not reproduced again). Verified the real user flow through the Claude Browser tool: fresh load showed Login (admin already existed at that point from the curl testing) → signed in → Dashboard with live data → reload preserved the session → Log out → back to Login. Recreated the container once more afterward so the reviewer gets a genuine first-run Setup screen rather than a pre-made login.
+
+### Client system tray icon
+
+- Added `client/src/bin/tray-helper.rs` (new binary) — on Windows, launches a PowerShell `System.Windows.Forms.NotifyIcon` ("Nano Stack 7 Agent - Running", with an "Exit" context-menu item) and blocks in `Application::Run()`'s message loop; non-Windows prints a "not implemented" warning and exits. Same rationale as `consent-helper`: keeps the native message loop out of the daemon's tokio runtime, no new Rust GUI crate dependency.
+- Added `client/src/tray.rs` (new) — `spawn()` resolves the helper's path next to the running executable and launches it detached (`Command::spawn()`, dropping the `Child` handle — confirmed this does not kill the child).
+- Updated `client/src/main.rs`: `mod tray;`, calls `tray::spawn()` first thing in `main()`.
+- Built and verified on `lab1`: compiled cleanly in WSL2 (cross-platform check) and natively (`cargo build --workspace`, succeeded — same PowerShell stderr-as-error display quirk as usual). Ran the client (pointed at a deliberately unreachable server address to isolate the tray behavior from enrollment) and confirmed via log output (`tray icon helper started path="...tray-helper.exe"`) and `Get-Process` that the helper launched. Found that `tray-helper.exe` itself gets killed by the same SSH-session-teardown/job-object pattern hit earlier with the server process, but its PowerShell child (the actual NotifyIcon/message-loop owner) survived independently and kept running after the SSH session closed — the best remote confirmation available. **Could not visually confirm the icon actually renders in the notification area** — that requires a human looking at `lab1`'s screen, which is out of reach for an SSH-driven session.
+
 ### React Admin Console PoC + full Podman stack (pivot from per-milestone dual-machine testing to a faster, single-pass build)
 
 - Scaffolded `admin-console/` (Vite + React + TypeScript): `Dashboard`, `Devices`, `Workspace` pages, `api.ts`/`hooks.ts` for typed fetches, dark-themed layout (`styles.css`). No new local Node.js toolchain needed — the build happens inside the Docker/Podman multi-stage build.

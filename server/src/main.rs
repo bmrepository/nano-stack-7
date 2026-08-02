@@ -1,10 +1,12 @@
 mod api;
+mod auth;
 mod checkin_channel;
 mod device_channel;
 mod finding;
 mod registry;
 mod workspace;
 
+use auth::AuthStore;
 use axum::routing::get;
 use axum::Router;
 use registry::Registry;
@@ -17,8 +19,9 @@ async fn main() -> anyhow::Result<()> {
 
     let workspace = Arc::new(workspace::load());
     let registry = Arc::new(Registry::default());
+    let auth = Arc::new(AuthStore::default());
 
-    let admin_api = tokio::spawn(run_admin_api(workspace.clone(), registry.clone()));
+    let admin_api = tokio::spawn(run_admin_api(workspace.clone(), registry.clone(), auth));
     let enrollment = tokio::spawn(device_channel::run(workspace.clone(), registry.clone(), "0.0.0.0:7777"));
     let checkin = tokio::spawn(checkin_channel::run(workspace, registry, "0.0.0.0:7778"));
 
@@ -31,11 +34,15 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_admin_api(workspace: Arc<workspace::WorkspaceConfig>, registry: Arc<Registry>) -> anyhow::Result<()> {
+async fn run_admin_api(
+    workspace: Arc<workspace::WorkspaceConfig>,
+    registry: Arc<Registry>,
+    auth: Arc<AuthStore>,
+) -> anyhow::Result<()> {
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
     let index_path = format!("{static_dir}/index.html");
 
-    let api_state = api::ApiState { workspace, registry };
+    let api_state = api::ApiState { workspace, registry, auth };
 
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))

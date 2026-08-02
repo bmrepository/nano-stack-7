@@ -2,6 +2,7 @@ mod checkin;
 mod consent;
 mod identity;
 mod inventory;
+mod tray;
 
 use shared_proto::{noise, EnrollmentRequest, EnrollmentResponse};
 use tokio::net::TcpStream;
@@ -11,6 +12,8 @@ const DEFAULT_CHECKIN_INTERVAL_SECS: u64 = 1800; // 30 minutes, per README Secti
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+
+    tray::spawn();
 
     let server_addr = std::env::var("SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:7777".to_string());
     let identity_key = identity::load_or_generate()?;
