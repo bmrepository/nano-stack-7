@@ -1,0 +1,295 @@
+# Agent Activity Log — Nano Stack 7
+
+Detailed, chronological record of successful actions performed by AI coding agents in this project — commands run, files created/modified, and outcomes — for tracking and audit purposes. Secrets are redacted (see the `agent-activity-log` skill for the rule); hostnames, internal/VPN IPs, usernames, paths, and versions are kept. Newest entries at the top.
+
+## 2026-08-02
+
+### Agent activity log tooling itself
+
+- Created `C:\workspace\ai-skills\.claude\skills\agent-activity-log\SKILL.md` defining this file's standing requirement across all projects.
+- Added "Rule 3 — maintain a detailed agent activity log" to `C:\workspace\ai-skills\AGENTS.md`.
+- Revised both after feedback that the first pass was too high-level: added explicit command-level detail requirements and a secrets-redaction rule to both files.
+- Created/rewrote this file (`agent-activity.md`) at the project root, backfilling all entries below from session history.
+
+### Postgres compose stack verified via podman-compose (WSL2)
+
+- Installed the compose provider (none existed yet):
+  ```bash
+  wsl -d Ubuntu -- bash -c "sudo apt-get install -y podman-compose"
+  ```
+  Result: installed successfully.
+- First `up` attempt failed:
+  ```bash
+  wsl -d Ubuntu -- bash -c "cd /mnt/c/workspace/nano-stack-7/deploy && podman-compose up -d"
+  ```
+  Result: `Error: short-name "postgres:16" did not resolve to an alias and no unqualified-search-registries are defined`.
+- Fix — added Docker Hub as the default unqualified-search registry:
+  ```bash
+  wsl -d Ubuntu -u root -- bash -c "mkdir -p /etc/containers && printf 'unqualified-search-registries = [\"docker.io\"]\n' >> /etc/containers/registries.conf"
+  ```
+  Result: appended to `/etc/containers/registries.conf`.
+- Retried:
+  ```bash
+  wsl -d Ubuntu -- bash -c "cd /mnt/c/workspace/nano-stack-7/deploy && podman-compose down; podman-compose up -d"
+  ```
+  Result: `deploy_postgres_1` container started from `docker.io/library/postgres:16`.
+- Verified running and accepting connections:
+  ```bash
+  wsl -d Ubuntu -- bash -c "podman ps; podman exec deploy_postgres_1 pg_isready -U nanostack7"
+  ```
+  Result: container `Up`, port `0.0.0.0:5432->5432/tcp`; `pg_isready` returned `/var/run/postgresql:5432 - accepting connections`.
+- Tore the stack back down after verification:
+  ```bash
+  wsl -d Ubuntu -- bash -c "cd /mnt/c/workspace/nano-stack-7/deploy && podman-compose down"
+  ```
+  Result: `deploy_postgres_1` container and `deploy_default` network removed.
+
+### server + shared-proto built and run under WSL2
+
+- Copied workspace source into the WSL2 filesystem (building against `/mnt/c/...` directly was avoided for performance/permissions reasons):
+  ```bash
+  wsl -d Ubuntu -- bash -c "mkdir -p ~/dev/nano-stack-7-tmp && cp -r /mnt/c/workspace/nano-stack-7/Cargo.toml /mnt/c/workspace/nano-stack-7/shared-proto /mnt/c/workspace/nano-stack-7/server /mnt/c/workspace/nano-stack-7/client ~/dev/nano-stack-7-tmp/"
+  ```
+  Result: workspace files present at `~/dev/nano-stack-7-tmp/` inside the distro (first attempt failed with "target directory not found" because `~/dev/nano-stack-7-tmp` didn't exist yet; fixed by creating it in the same command with `mkdir -p`).
+- Built:
+  ```bash
+  wsl -d Ubuntu -- bash -c "source \$HOME/.cargo/env && cd ~/dev/nano-stack-7-tmp && cargo build -p server -p shared-proto"
+  ```
+  Result: built cleanly, no errors.
+- Ran the server binary briefly to confirm it starts and binds:
+  ```bash
+  wsl -d Ubuntu -- bash -c "cd ~/dev/nano-stack-7-tmp && RUST_LOG=info timeout 3 ./target/debug/server"
+  ```
+  Result: logged `server listening on 0.0.0.0:8080`.
+
+### Rootless Podman set up in WSL2 (Ubuntu)
+
+- Installed Podman and rootless dependencies:
+  ```bash
+  wsl -d Ubuntu -- bash -c "sudo apt-get install -y podman uidmap slirp4netns"
+  ```
+  Result: installed successfully.
+- Verified rootless operation:
+  ```bash
+  wsl -d Ubuntu -- bash -c "podman --version; podman info --format '{{.Host.Security.Rootless}}'; podman run --rm hello-world"
+  ```
+  Result: `podman version 5.7.0`; rootless=`true`; `hello-world` container ran successfully. Emitted a warning: `"/" is not a shared mount, this could cause issues or missing mounts with rootless containers`.
+- Fixed the shared-mount warning (would have broken future bind-mounted volumes, e.g. Postgres data):
+  ```bash
+  wsl -d Ubuntu -u root -- bash -c "printf '[user]\ndefault=dev\n\n[boot]\ncommand = mount --make-rshared /\n' > /etc/wsl.conf"
+  wsl --terminate Ubuntu
+  ```
+  Result: `/etc/wsl.conf` updated with a `[boot]` section running `mount --make-rshared /` on every distro start.
+- Verified the fix with an actual bind-mount test:
+  ```bash
+  MSYS_NO_PATHCONV=1 wsl -d Ubuntu -- podman run --rm --mount type=bind,src=/tmp,dst=/tmp alpine echo mount-test-ok
+  ```
+  Result: `mount-test-ok`. (First attempt without `MSYS_NO_PATHCONV=1` failed — Git Bash's MSYS layer auto-converted the `/tmp` argument into a mangled Windows path before it reached `wsl.exe`, producing `Error: statfs /mnt/c/workspace/ironkeep/C:/Program Files/Git/tmp: no such file or directory`. Not a Podman issue — a Git-Bash-driving-WSL path-mangling gotcha, also independently documented in the `cross-platform-scripts` skill in `ai-skills`.)
+
+### Rust toolchain + protoc installed in WSL2 (Ubuntu)
+
+- Installed base packages:
+  ```bash
+  wsl -d Ubuntu -- bash -c "sudo apt-get update && sudo apt-get install -y build-essential curl git protobuf-compiler pkg-config libssl-dev"
+  ```
+  Result: installed successfully (includes `protoc` via `protobuf-compiler`).
+- Installed Rust via the standard rustup script:
+  ```bash
+  wsl -d Ubuntu -- bash -c "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable"
+  ```
+  Result: installed successfully.
+- Verified and added components:
+  ```bash
+  wsl -d Ubuntu -- bash -c "source \$HOME/.cargo/env && rustc --version; cargo --version"
+  wsl -d Ubuntu -- bash -c "source \$HOME/.cargo/env && rustup component add rustfmt clippy"
+  ```
+  Result: `rustc 1.97.1 (8bab26f4f 2026-07-14)`, `cargo 1.97.1 (c980f4866 2026-06-30)`; `rustfmt`/`clippy` already present ("up to date").
+
+### Ubuntu WSL2 distro installed and configured as the `dev` user
+
+- Installed the distro:
+  ```powershell
+  wsl --install -d Ubuntu --no-launch
+  ```
+  Result (first two attempts): failed with `WSL2 is unable to start since virtualization is not enabled on this machine` / error code `HCS_E_HYPERV_NOT_INSTALLED`. Diagnosed with:
+  ```powershell
+  systeminfo | Select-String "Hyper-V" -Context 0,4
+  ```
+  which showed `Virtualization Enabled In Firmware: No`. This required the user to enable AMD-V in the PC's BIOS/UEFI firmware directly (outside anything the agent can do). After the user confirmed AMD-V was enabled and a re-check showed `A hypervisor has been detected`, the same install command succeeded.
+  Result: Ubuntu distro registered (`wsl -l -v` showed `Ubuntu`, state `Stopped`, version `2`).
+- Configured a non-root default user (a fresh install defaults to `root` with no user set up):
+  ```bash
+  wsl -d Ubuntu -u root -- bash -c "
+  useradd -m -s /bin/bash dev
+  usermod -aG sudo dev
+  echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev
+  chmod 0440 /etc/sudoers.d/dev
+  printf '[user]\ndefault=dev\n' > /etc/wsl.conf
+  "
+  wsl --terminate Ubuntu
+  ```
+  Result: verified with `wsl -d Ubuntu -- whoami` → `dev`, and `wsl -d Ubuntu -- sudo whoami` → `root` (passwordless sudo confirmed working). A dedicated sudoers drop-in (`/etc/sudoers.d/dev`, mode `0440`) grants `dev` passwordless sudo — no password was ever set for this account.
+
+### Cargo workspace scaffolded and client crate verified building on lab1
+
+- Created the workspace at `C:\workspace\nano-stack-7`:
+  - `Cargo.toml` — workspace root, members `shared-proto`, `server`, `client`.
+  - `.gitignore` — `/target`, `**/target`, `*.pdb`.
+  - `shared-proto/Cargo.toml`, `shared-proto/build.rs` (uses `prost_build::compile_protos`), `shared-proto/proto/device.proto` (messages `EnrollmentRequest`, `DeviceCertificate`, `EnrollmentResponse` — first-pass placeholders for milestone (a)), `shared-proto/src/lib.rs` (includes the generated code).
+  - `server/Cargo.toml` (deps: `shared-proto`, `tokio`, `axum`, `snow`, `prost`, `serde`, `tracing`, `tracing-subscriber`), `server/src/main.rs` (Axum app with a `/healthz` route, binds `0.0.0.0:8080`, constructs a sample `EnrollmentRequest` to sanity-check the `shared-proto` link).
+  - `client/Cargo.toml` (same deps as server plus `windows-service` under `[target.'cfg(windows)'.dependencies]`), `client/src/main.rs` (constructs and logs a sample `EnrollmentRequest`).
+  - `deploy/docker-compose.yml` — single `postgres:16` service, env `POSTGRES_USER=nanostack7`/`POSTGRES_DB=nanostack7` (password redacted from this log — see the compose file itself, which is a local dev-only default credential, not a production secret), port `5432`, named volume `postgres-data`.
+- Copied the new workspace files to `lab1` for a build check (not via git — nothing has been pushed):
+  ```bash
+  ssh -i ~/.ssh/id_ed25519_lab1 sysadmin@100.105.95.89 "New-Item -ItemType Directory -Path C:\dev\nano-stack-7 -Force | Out-Null"
+  scp -i ~/.ssh/id_ed25519_lab1 -r "/c/workspace/nano-stack-7/Cargo.toml" "/c/workspace/nano-stack-7/shared-proto" "/c/workspace/nano-stack-7/client" "sysadmin@100.105.95.89:C:/dev/nano-stack-7/"
+  ```
+  Result (first attempt): `scp: remote mkdir "/c/dev/nano-stack-7/": No such file or directory` — POSIX-style destination path doesn't resolve against Windows OpenSSH. Fixed by using a Windows-style forward-slash path (`C:/dev/nano-stack-7/`), which succeeded.
+- First build attempt failed because the workspace `Cargo.toml` also references the `server` member, which hadn't been copied:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519_lab1 sysadmin@100.105.95.89 "Set-Location C:\dev\nano-stack-7; cargo build -p client"
+  ```
+  Result: `error: failed to load manifest for workspace member ...\server`. Fixed by also copying `server/`:
+  ```bash
+  scp -i ~/.ssh/id_ed25519_lab1 -r "/c/workspace/nano-stack-7/server" "sysadmin@100.105.95.89:C:/dev/nano-stack-7/"
+  ```
+- Rebuild attempt hit a real compile error:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519_lab1 sysadmin@100.105.95.89 "Set-Location C:\dev\nano-stack-7; cargo build -p client"
+  ```
+  Result: `error[E0119]: conflicting implementations of trait Debug for type EnrollmentRequest` (and two other message types) — caused by `shared-proto/build.rs` adding an explicit `.type_attribute(".", "#[derive(Debug)]")` on top of `prost::Message`'s derive, which already implements `Debug` in this `prost` version (0.13.5). Fixed by removing that `type_attribute` call, leaving `build.rs` as a plain `prost_build::compile_protos(...)` call. Synced the fix:
+  ```bash
+  scp -i ~/.ssh/id_ed25519_lab1 "/c/workspace/nano-stack-7/shared-proto/build.rs" "sysadmin@100.105.95.89:C:/dev/nano-stack-7/shared-proto/build.rs"
+  ```
+- Final successful build and run:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519_lab1 sysadmin@100.105.95.89 "Set-Location C:\dev\nano-stack-7; cargo build -p client"
+  ssh -i ~/.ssh/id_ed25519_lab1 sysadmin@100.105.95.89 "\$env:RUST_LOG='info'; Set-Location C:\dev\nano-stack-7; .\target\debug\client.exe"
+  ```
+  Result: `Finished dev profile [unoptimized + debuginfo] target(s) in 4.39s`; running the binary logged `nano-stack-7 client placeholder started sample=EnrollmentRequest { workspace_enrollment_token: "placeholder", device_public_key: [], hostname: "placeholder-host", os_version: "placeholder-os" }` — confirms `client` builds, links against `windows-service`, and the `shared-proto` codegen works end-to-end on Windows/MSVC.
+
+## 2026-08-01
+
+### Full Windows-native toolchain installed on lab1
+
+- Baseline check:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519_lab1 sysadmin@100.105.95.89 "winget --version; rustc --version; git --version"
+  ```
+  Result: `winget` present (`v1.9.25200`); `rustc`/`git` not installed.
+- Installed Git:
+  ```bash
+  winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements --silent
+  ```
+  Result: `Git.Git` version `2.55.0.3` installed.
+- Installed Rust via rustup:
+  ```bash
+  winget install --id Rustlang.Rustup -e --source winget --accept-package-agreements --accept-source-agreements --silent
+  ```
+  Result: `rustup 1.29.0`, default toolchain `rustc 1.97.1 (8bab26f4f 2026-07-14)` installed; `rustfmt`/`clippy` already present.
+- Confirmed the MSVC linker was missing (expected — rustup alone doesn't provide it):
+  ```powershell
+  rustc main.rs -o test.exe
+  ```
+  Result: `error: linker 'link.exe' not found`.
+- Installed VS Build Tools 2022 with the C++ workload and Windows 11 SDK (large download, run in background):
+  ```bash
+  winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --silent --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows11SDK.22621 --includeRecommended"
+  ```
+  Result: installed successfully. Verified with an actual compile+link+run test (not just a version check):
+  ```powershell
+  rustc main.rs -o test.exe; .\test.exe
+  ```
+  Result: printed `hello from lab1` — confirmed the MSVC linker now works.
+- Installed `protoc`:
+  ```bash
+  winget search protobuf   # located Google.Protobuf
+  winget install --id Google.Protobuf -e --source winget --accept-package-agreements --accept-source-agreements --silent
+  ```
+  Result: `protoc` (protobuf) version `35.1` installed; verified via `protoc --version` → `libprotoc 35.1`.
+- Installed the full Sysinternals suite:
+  ```bash
+  winget search sysinternals   # located Microsoft.Sysinternals.Suite
+  winget install --id Microsoft.Sysinternals.Suite -e --source winget --accept-package-agreements --accept-source-agreements --silent
+  ```
+  Result: installed successfully, ~80 command-line aliases added (Process Explorer, Process Monitor, PsTools, etc.).
+- Installed `cargo-wix`:
+  ```bash
+  cargo install cargo-wix
+  ```
+  Result: compiled and installed `cargo-wix v0.3.9` to `C:\Users\sysadmin\.cargo\bin\cargo-wix.exe`; verified with `cargo wix --version` → `cargo-wix-wix 0.3.9`.
+- Cleaned up the temporary test files used above (`C:\temp_rusttest`).
+
+### SSH connectivity to lab1 established
+
+- Confirmed Tailscale was already installed on the local dev PC but logged out (`tailscale status` → `Logged out`); user ran `tailscale up` and authenticated to the shared tailnet.
+- On `lab1`: enabled OpenSSH Server (`Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`, `Start-Service sshd`, `Set-Service -Name sshd -StartupType Automatic`), set the default shell to PowerShell via the `HKLM:\SOFTWARE\OpenSSH` `DefaultShell` registry value, and installed/joined Tailscale to the same tailnet.
+- Generated a dedicated keypair on the local dev PC (separate from the existing GitHub key):
+  ```bash
+  ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_lab1 -C "claude-code-lab1" -N ""
+  ```
+  Result: keypair created at `~/.ssh/id_ed25519_lab1` (private key never displayed/logged; public key installed on lab1 per below, value itself omitted from this log per the redaction rule).
+- On `lab1` (admin account `sysadmin`), installed the public key into the admin-specific location and locked down its ACLs:
+  ```powershell
+  New-Item -ItemType Directory -Path "C:\ProgramData\ssh" -Force | Out-Null
+  Add-Content -Path "C:\ProgramData\ssh\administrators_authorized_keys" -Value $pubKey
+  icacls "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r
+  icacls "C:\ProgramData\ssh\administrators_authorized_keys" /grant "SYSTEM:F" "Administrators:F"
+  Restart-Service sshd
+  ```
+  (Required specifically because `sysadmin` is a member of the local Administrators group — Windows OpenSSH ignores `%USERPROFILE%\.ssh\authorized_keys` for admin accounts and only reads `administrators_authorized_keys`, and refuses it entirely unless ACLs are restricted to SYSTEM+Administrators.)
+- Verified via `tailscale status` on the local PC (showed `lab1` reachable at `100.105.95.89`) and then:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519_lab1 -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 sysadmin@100.105.95.89 "whoami; hostname; systeminfo | findstr /B /C:\"OS Name\" /C:\"OS Version\""
+  ```
+  Result: `lab1\sysadmin`, hostname `lab1`, `OS Name: Microsoft Windows 11 Pro`, `OS Version: 10.0.26200`.
+
+### Dev/test target architecture: dedicated Tailscale-reachable Windows 11 PC
+
+- Discussed and rejected installing the Windows-native toolchain (MSVC/SDK/WiX/Sysinternals) on the user's primary daily-driver PC, and rejected consolidating it into a VirtualBox VM on that same laptop (portability concern: tied to one physical machine's disk).
+- Confirmed the final approach: a **dedicated physical Windows 11 PC on the home LAN ("lab1")**, reachable via Tailscale from any device, with the client toolchain and test runs both on bare metal (no nested VM) — chosen for simplicity, accepting that state accumulates over time without periodic reimaging.
+- Updated `README.md` Section 13.3/13.4 to describe this architecture (superseding the earlier VirtualBox-VM plan) and the split between what lives on `lab1` (Windows-native toolchain) vs. inside WSL2 on the daily-driver PC (Linux-side toolchain).
+
+### Dev environment containerization strategy: WSL2 + rootless Podman
+
+- Evaluated Hyper-V full-VM vs. WSL2 for the Linux-side dev loop; confirmed WSL2 + rootless Podman (not Docker Desktop) — WSL2 chosen because it's reachable via `wsl.exe -d <distro> -- <command>` directly with no SSH/credential setup, unlike a Hyper-V VM.
+- Documented the decision in `README.md` Section 13.4 (split into "on the dedicated Windows box" vs. "inside WSL2" tool lists).
+
+### Repository consolidated to a single repo with `main`/`dev` branches
+
+- User consolidated the originally-planned two-repo split (separate `ironkeep` source repo + `ironkeep-stack` deploy repo) into one repo, copying all files into `bmrepository/nano-stack-7` at `C:\workspace\nano-stack-7` (remote `git@github.com:bmrepository/nano-stack-7.git`, already had one commit, `main` branch, working tree had an uncommitted `README.md` change at the time).
+- Confirmed branch model (`main` = production/Portainer-tracked, `dev` = active development) and that the deployable stack definition would live at `deploy/docker-compose.yml` within this single repo.
+- Updated `README.md`/architecture doc Section 13.1–13.2 to describe the single-repo model, replacing all `nano-stack-7-stack` references.
+- Renamed the standalone architecture doc file from `Ironkeep Architecture and Requirements.md` to `Nano Stack 7 Architecture and Requirements.md` (plain filesystem `mv`, since it wasn't yet tracked by git in the new repo).
+- Later in the same day, merged that standalone file's full content into `README.md` and deleted the separate file, per the user's request to consolidate documentation into one place.
+
+### Project renamed: Ironkeep → Nano Stack 7
+
+- Confirmed the new display name "Nano Stack 7" and slug `nano-stack-7` for repo/crate/image names.
+- Rewrote `README.md` (title + vision statement) and ran targeted `sed` replacements across the architecture doc to change all `Ironkeep`/`ironkeep` references to `Nano Stack 7`/`nano-stack-7` (including repo path references, e.g. `bmrepository/ironkeep` → `bmrepository/nano-stack-7`), then manually fixed two ASCII box-diagram border lines whose width broke when the longer name was substituted in.
+- Verified with `grep -rn "[Ii]ronkeep"` across the project that no stray references remained (aside from Obsidian-managed `.obsidian/workspace.json` and `Project Map.canvas`, which regenerate automatically and were left alone).
+- Updated memory files (`ironkeep_poc_decisions.md`, `ironkeep_infra_layout.md`) and added a new memory (`nano_stack_7_rename.md`) recording the rename.
+
+### Endpoint runtime dependency decisions confirmed
+
+- Confirmed: client binary statically links the MSVC C++ runtime (`crt-static`) rather than depending on the endpoint having the VC++ Redistributable; Winget-missing handling is graceful degrade (detect at inventory time, disable the app-patch-management plugin for that device, surface a status flag — no auto-install attempt); `candle` is the lean for the Phase 2 local AI inference runtime over `llama.cpp` bindings.
+- Added an "Endpoint Runtime Dependencies" subsection to the architecture doc's Section 4.2 documenting all three.
+
+### Phase 1 PoC milestone breakdown and dev PC software requirements documented
+
+- Confirmed the milestone order: (a) Noise_XX handshake + device cert issuance, (b) inventory collection + check-in, (c) hardcoded patch-management finding rule, (d) consent IPC, (e) remediation action via Winget; confirmed a single Cargo workspace layout, a deferred (not pre-selected) PoC demo target app, and the PoC definition-of-done (demoable end-to-end on the dev PC + Windows 11 test target, no installer/packaging polish required).
+- Added Section 11.1 (milestones) and an initial Section 13 (dev PC software requirements: Rust, VS Build Tools, Docker Desktop, Postgres tools, Windows SDK, WiX, Sysinternals, VS Code) to the architecture doc.
+
+### Phase 1 PoC open decisions confirmed and documented
+
+- Reviewed the existing project (`README.md`, `IRONKEEP-ARCHITECTURE.md`) to resume planning from a prior session.
+- Confirmed all 7 open decisions from the architecture doc's "Open Decisions" section: Windows-first PoC, PoC scope narrowed to exclude local AI inference (deferred to Phase 2), elevated-service-account privilege model, immediate workspace-deletion cascade, per-workspace Help Desk role scope, PostgreSQL as the database, and config-driven consent tiering from day one.
+- Edited `IRONKEEP-ARCHITECTURE.md` Section 10 to record all 7 as confirmed decisions (renamed from "Open Decisions Requiring Confirmation" to "Decisions (Confirmed 2026-08-01)"), and updated the Phase 1 roadmap line and doc status header to match.
+- Attempted to open a PR for this change:
+  ```bash
+  git checkout -b poc-decisions-confirmed
+  git add IRONKEEP-ARCHITECTURE.md
+  git commit -m "Confirm Phase 1 PoC decisions and update roadmap"
+  git push -u origin poc-decisions-confirmed
+  ```
+  Result: commit succeeded locally; push failed — `git@github.com: Permission denied (publickey)`. `gh auth status` also failed — `gh` CLI not installed in this environment. Left the commit local and unpushed per the user's instruction to handle pushing manually themselves.

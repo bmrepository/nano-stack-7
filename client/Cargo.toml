@@ -1,0 +1,16 @@
+[package]
+name = "client"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared-proto = { path = "../shared-proto" }
+tokio = { version = "1", features = ["full"] }
+snow = "0.9"
+prost = "0.13"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.7"

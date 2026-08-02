@@ -1,0 +1,10 @@
+[package]
+name = "shared-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+prost = "0.13"
+
+[build-dependencies]
+prost-build = "0.13"

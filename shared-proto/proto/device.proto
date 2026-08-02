@@ -1,0 +1,25 @@
+syntax = "proto3";
+package nano_stack_7;
+
+// Milestone (a): Noise_XX handshake + device cert issuance.
+// Fields are a first-pass placeholder and expected to evolve as enrollment is implemented.
+
+message EnrollmentRequest {
+    string workspace_enrollment_token = 1;
+    bytes device_public_key = 2;
+    string hostname = 3;
+    string os_version = 4;
+}
+
+message DeviceCertificate {
+    string device_id = 1;
+    bytes device_public_key = 2;
+    string workspace_id = 3;
+    int64 issued_at_unix = 4;
+    bytes workspace_signature = 5;
+}
+
+message EnrollmentResponse {
+    DeviceCertificate certificate = 1;
+    bytes workspace_public_key = 2;
+}
