@@ -1,3 +1,4 @@
+use crate::registry::Registry;
 use crate::workspace::WorkspaceConfig;
 use shared_proto::{cert, noise, DeviceCertificate, EnrollmentRequest, EnrollmentResponse};
 use std::sync::Arc;
@@ -6,30 +7,31 @@ use tokio::net::{TcpListener, TcpStream};
 /// Milestone (a): Noise_XX handshake + device cert issuance.
 /// Runs the device enrollment channel — a separate TCP listener from the
 /// Axum admin API, since this speaks the Noise protocol, not HTTP.
-pub async fn run(workspace: Arc<WorkspaceConfig>, addr: &str) -> anyhow::Result<()> {
+pub async fn run(workspace: Arc<WorkspaceConfig>, registry: Arc<Registry>, addr: &str) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!("device channel listening on {}", listener.local_addr()?);
+    tracing::info!("enrollment channel listening on {}", listener.local_addr()?);
 
     loop {
         let (stream, peer) = listener.accept().await?;
         let workspace = workspace.clone();
+        let registry = registry.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_enrollment(stream, &workspace).await {
+            if let Err(e) = handle_enrollment(stream, &workspace, &registry).await {
                 tracing::warn!(%peer, error = %e, "enrollment connection failed");
             }
         });
     }
 }
 
-async fn handle_enrollment(mut stream: TcpStream, workspace: &WorkspaceConfig) -> anyhow::Result<()> {
-    let mut transport = noise::handshake_responder(&mut stream, &workspace.private_key).await?;
-
+async fn handle_enrollment(
+    mut stream: TcpStream,
+    workspace: &WorkspaceConfig,
+    registry: &Registry,
+) -> anyhow::Result<()> {
     // The Noise_XX handshake itself proves the initiator controls this key —
     // trust it over anything the client might separately claim.
-    let device_public_key = transport
-        .get_remote_static()
-        .ok_or_else(|| anyhow::anyhow!("handshake completed without a remote static key"))?
-        .to_vec();
+    let (mut transport, device_public_key) =
+        noise::handshake_xx_responder(&mut stream, &workspace.private_key).await?;
 
     let request: EnrollmentRequest = noise::recv_message(&mut stream, &mut transport).await?;
 
@@ -53,6 +55,7 @@ async fn handle_enrollment(mut stream: TcpStream, workspace: &WorkspaceConfig) -
         workspace_signature: vec![],
     };
     let cert = cert::sign_certificate(&workspace.private_key, cert);
+    registry.insert(cert.clone());
 
     noise::send_message(
         &mut stream,

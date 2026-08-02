@@ -4,6 +4,32 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Milestone (b) implemented: inventory collection + check-in over Noise_IK
+
+- Extended `shared-proto/proto/device.proto`: added `InstalledApp`, `DeviceInventory`, `CheckInResponse` messages.
+- Refactored `shared-proto/src/noise.rs`: renamed `handshake_initiator`/`handshake_responder` to `handshake_xx_initiator`/`handshake_xx_responder`; both (and two new `handshake_ik_initiator`/`handshake_ik_responder` functions implementing the 2-message `Noise_IK_25519_ChaChaPoly_SHA256` handshake) now uniformly return `(TransportState, remote_static_key)` instead of leaving each caller to separately call `get_remote_static()` and handle the `None` case.
+- Added `server/src/registry.rs` (new) — in-memory `Registry` (`Mutex<HashMap<Vec<u8>, DeviceCertificate>>`) with `insert`/`get`, populated on enrollment.
+- Updated `server/src/device_channel.rs` to use the new `handshake_xx_responder` return signature and insert issued certificates into the registry.
+- Added `server/src/checkin_channel.rs` (new) — `run()` binds a third TCP listener (default `0.0.0.0:7778`) for Noise_IK sessions; `handle_checkin()` runs the IK responder handshake, looks up the device's cert in the registry by its authenticated public key, verifies the cert via `cert::verify_certificate`, receives a `DeviceInventory`, logs it, and replies with `CheckInResponse { accepted: true, server_time_unix }`.
+- Updated `server/src/main.rs` to construct a shared `Arc<Registry>` and run three concurrent listeners (admin API `:8080`, enrollment `:7777`, check-in `:7778`) via `tokio::select!`.
+- Extended `client/src/identity.rs`: added `is_enrolled()` (checks both `device_cert.bin` and a new `workspace_public_key.bin` exist), `save_workspace_public_key()`/`load_workspace_public_key()`.
+- Added `client/src/inventory.rs` (new) — `collect()` builds a `DeviceInventory` (hostname, OS, installed apps, timestamp); `#[cfg(windows)]` `collect_installed_apps()` shells out to `winget list` and loosely parses the table; `#[cfg(not(windows))]` returns an empty list.
+- Added `client/src/checkin.rs` (new) — `run_once()` connects, runs the Noise_IK initiator handshake (using the persisted identity key + workspace public key), sends the collected inventory, and awaits the `CheckInResponse`.
+- Rewrote `client/src/main.rs`: on startup, calls `identity::is_enrolled()` and only runs the enrollment flow if needed (persisting the workspace public key learned from that handshake this time, in addition to the cert); then always enters `run_checkin_scheduler()`, a `tokio::time::interval` loop (`CHECKIN_INTERVAL_SECS` env, default 1800s) calling `checkin::run_once()` each tick.
+- Built and tested in WSL2:
+  ```bash
+  wsl -d Ubuntu -- bash -c "cargo build --workspace --exclude client"   # server + shared-proto, succeeded
+  wsl -d Ubuntu -- bash -c "cargo build -p client"                       # succeeded
+  ```
+  Hit the same background-process-killed-by-session-teardown issue as milestone (a) — a plain `wsl -d Ubuntu -- bash -c "... &"` server didn't survive; the earlier `setsid nohup ... & disown` recipe worked, but only after adding `MSYS_NO_PATHCONV=1` — without it, `/tmp/server.log` silently resolved to a mangled Windows path and the server appeared to not start (empty log, no process) even though the binary itself was fine (confirmed via a foreground `timeout 3 ./target/debug/server` run showing all three listeners bind correctly).
+  ```bash
+  MSYS_NO_PATHCONV=1 wsl -d Ubuntu -- bash -c "cd ~/dev/nano-stack-7-tmp && rm -f /tmp/server.log && rm -rf device-identity && setsid nohup ./target/debug/server > /tmp/server.log 2>&1 < /dev/null & disown; sleep 1; pgrep -af 'target/debug/server'"
+  ```
+  Ran the client twice: first run (fresh `device-identity/`) with `CHECKIN_INTERVAL_SECS=3`, observed enrollment followed by 4 successful Noise_IK check-in cycles (`check-in successful installed_app_count=0 ...` — 0 expected on Linux, no `winget`), matched by 4 `check-in received` log lines server-side with the same `device_id`. Second run (reusing the persisted `device-identity/`) logged `already enrolled; skipping enrollment` and went straight to check-in — confirmed the skip-enrollment path works.
+- Synced `shared-proto`, `server`, `client` to `lab1` via `scp` and built (`cargo build --workspace`) — succeeded. Ran a native Windows end-to-end test (server + client together in one SSH session, `CHECKIN_INTERVAL_SECS=3`/`5`): enrollment and check-in both succeeded, but `installed_app_count=0` despite `winget` being present.
+- **Bug found and fixed**: ran `winget list` directly on `lab1` and found it prompts interactively for MS Store source terms-of-transaction agreement, which fails with `0x8a150042 : Error reading input in prompt` when there's no interactive session (exactly the client daemon's situation) — this, not a parsing bug, was why installed-app count was 0. Fixed by adding `--accept-source-agreements --disable-interactivity` to the `winget list` invocation in `client/src/inventory.rs`, and added an `output.status.success()` check that logs a warning (rather than silently returning an empty list) if `winget` ever exits non-zero again. Synced the fix, rebuilt (`cargo build -p client`), and reran the same native test: `installed_app_count=86` — real inventory data confirmed flowing end-to-end.
+- Cleaned up: stopped both test servers (WSL2: `pkill -f target/debug/server`; `lab1`: `Stop-Process -Name server -Force`), removed `server-out.log`/`server-err.log`/`device-identity/` on `lab1`.
+
 ### Milestone (a) implemented: Noise_XX handshake + device cert issuance
 
 - Created a `dev` branch (`git checkout -b dev`) per the confirmed `main`=production/`dev`=active-development branch model, before starting implementation work.

@@ -29,3 +29,22 @@ message DeviceCertificate {
 message EnrollmentResponse {
     DeviceCertificate certificate = 1;
 }
+
+// Milestone (b): inventory collection + check-in over Noise_IK.
+
+message InstalledApp {
+    string name = 1;
+    string version = 2;
+}
+
+message DeviceInventory {
+    string hostname = 1;
+    string os_version = 2;
+    repeated InstalledApp installed_apps = 3;
+    int64 collected_at_unix = 4;
+}
+
+message CheckInResponse {
+    bool accepted = 1;
+    int64 server_time_unix = 2;
+}

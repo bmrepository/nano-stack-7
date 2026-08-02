@@ -320,7 +320,7 @@ Repo/workspace layout: a single Cargo workspace in the single `nano-stack-7` rep
 | # | Milestone | Status | Notes |
 |---|---|---|---|
 | a | Noise_XX handshake + device cert issuance | ✅ Implemented 2026-08-02 | Establishes the enrollment flow and workspace-signed device identity — the trust foundation everything else depends on. See 11.1.1 for implementation notes. |
-| b | Inventory collection + check-in to server | Not started | Client daemon gathers basic device/software inventory over Noise_IK sessions on the scheduler cadence. |
+| b | Inventory collection + check-in to server | ✅ Implemented 2026-08-02 | Client daemon gathers basic device/software inventory over Noise_IK sessions on the scheduler cadence. See 11.1.2 for implementation notes. |
 | c | One hardcoded patch-management finding rule | Not started | Rule-based (not AI-driven) — detects one outdated app as a stand-in for the eventual AI vulnerability/performance plugins. |
 | d | Consent IPC | Not started | Tray/notification helper prompts the user, decision + outcome logged as an audit trail entry. |
 | e | Remediation action | Not started | Executes the actual patch via Winget for the flagged app. Target app not pre-selected — pick any small, safe Winget-packaged app (e.g. 7-Zip, Notepad++) when this milestone is reached. |
@@ -335,6 +335,15 @@ Repo/workspace layout: a single Cargo workspace in the single `nano-stack-7` rep
 - **Workspace config is a placeholder**: `server/src/workspace.rs` loads a single workspace from env vars (`WORKSPACE_ID`, `WORKSPACE_ENROLLMENT_TOKEN`, `WORKSPACE_PRIVATE_KEY_HEX`), generating an ephemeral random key with a logged warning if unset. This stands in for the real Postgres-backed Workspace Manager (Section 4.1) — devices enrolled against an ephemeral key won't be recognized after a server restart until that lands.
 - **Client identity storage is a placeholder path**: `client/src/identity.rs` persists to `./device-identity/` relative to the working directory. Needs to move to a proper per-OS app-data location before this becomes a real installed service.
 - **Verified**: full enrollment loop (handshake → token validation → cert issuance → client-side persistence) tested end-to-end both in WSL2 (Linux) and natively on `lab1` (Windows/MSVC).
+
+#### 11.1.2 Milestone (b) implementation notes
+
+- **Two more channels**: a Noise_IK check-in channel (`:7778`) joins the existing enrollment (`:7777`, Noise_XX) and admin API (`:8080`) listeners — three concurrent listeners total in `server/src/main.rs`.
+- **Learning the workspace's public key**: `shared-proto::noise`'s handshake functions were refactored to all return `(TransportState, remote_static_key)`, so the client can capture and persist the workspace's public key from the *enrollment* handshake's remote static key — required because Noise_IK's initiator must know the responder's static key in advance. Stored as `device-identity/workspace_public_key.bin`.
+- **Server-side device registry**: `server/src/registry.rs` is an in-memory `HashMap<device_public_key, DeviceCertificate>`, populated on enrollment and checked on every check-in (both that the device is known *and* that its certificate still verifies against the workspace key via `cert::verify_certificate`). Same placeholder caveat as the workspace config — doesn't survive a server restart until the real Postgres Device table lands.
+- **Client behavior**: on startup, the client checks `identity::is_enrolled()` (cert + workspace pubkey both persisted) and enrolls only if needed, then runs a `tokio::time::interval` scheduler performing one Noise_IK check-in per tick (`CHECKIN_INTERVAL_SECS` env, default 1800s/30min per Section 4.2).
+- **Inventory collection**: hostname + OS (reused from enrollment) plus an installed-app list. On Windows this shells out to `winget list --accept-source-agreements --disable-interactivity` and loosely parses the table output; non-Windows returns an empty list (Winget doesn't exist there, and this project is Windows-first — see Section 10). Real bug hit and fixed during testing: `winget list` prompts interactively for MS Store source terms-of-transaction on first use, which fails outright in a non-interactive session — `--accept-source-agreements` avoids the prompt. Caught by testing against real `winget` output on `lab1`, not just the Linux/WSL2 path (which never exercises this branch, since it's `#[cfg(windows)]`).
+- **Verified**: full loop (enroll only if needed → periodic Noise_IK check-in → real inventory data, 86 installed apps detected on `lab1`) tested end-to-end on both WSL2 and natively on `lab1`.
 
 ---
 
