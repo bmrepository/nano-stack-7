@@ -10,5 +10,18 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    ports:
+      - "8080:8080" # Admin API + React Admin Console
+      - "7777:7777" # Device enrollment channel (Noise_XX)
+      - "7778:7778" # Device check-in channel (Noise_IK)
+    environment:
+      WORKSPACE_ENROLLMENT_TOKEN: dev-enrollment-token
+    depends_on:
+      - postgres
+
 volumes:
   postgres-data:

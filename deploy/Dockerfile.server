@@ -1,0 +1,27 @@
+# Stage 1: build the React admin console
+FROM node:20-alpine AS frontend-build
+WORKDIR /app/admin-console
+COPY admin-console/package.json ./
+RUN npm install
+COPY admin-console/ ./
+RUN npm run build
+
+# Stage 2: build the Rust server
+FROM rust:1-slim AS backend-build
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+COPY Cargo.toml ./
+COPY shared-proto ./shared-proto
+COPY server ./server
+COPY client ./client
+RUN cargo build --release -p server
+
+# Stage 3: runtime image
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=backend-build /app/target/release/server ./server
+COPY --from=frontend-build /app/admin-console/dist ./static
+ENV STATIC_DIR=/app/static
+EXPOSE 8080 7777 7778
+CMD ["./server"]

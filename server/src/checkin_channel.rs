@@ -32,7 +32,7 @@ async fn handle_checkin(mut stream: TcpStream, workspace: &WorkspaceConfig, regi
     // enough — it must also be a key we actually issued a certificate for,
     // and that certificate must still verify against the workspace key.
     let existing_cert = registry
-        .get(&device_public_key)
+        .get_cert(&device_public_key)
         .ok_or_else(|| anyhow::anyhow!("check-in from a device with no known certificate"))?;
 
     if !cert::verify_certificate(&workspace.private_key, &existing_cert) {
@@ -64,6 +64,14 @@ async fn handle_checkin(mut stream: TcpStream, workspace: &WorkspaceConfig, regi
     let server_time_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
+
+    registry.record_checkin(
+        &device_public_key,
+        inventory.hostname.clone(),
+        inventory.os_version.clone(),
+        findings.clone(),
+        server_time_unix,
+    );
 
     noise::send_message(
         &mut stream,

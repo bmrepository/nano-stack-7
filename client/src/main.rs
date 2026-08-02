@@ -1,4 +1,5 @@
 mod checkin;
+mod consent;
 mod identity;
 mod inventory;
 

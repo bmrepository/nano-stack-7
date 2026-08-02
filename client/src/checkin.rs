@@ -24,8 +24,6 @@ pub async fn run_once(server_addr: &str, identity_key: &[u8], workspace_public_k
         "check-in successful"
     );
 
-    // Milestone (c): detection only — surfacing findings here for now.
-    // Milestone (d) turns these into an actual consent prompt.
     for f in &response.findings {
         tracing::warn!(
             plugin_id = %f.plugin_id,
@@ -35,6 +33,34 @@ pub async fn run_once(server_addr: &str, identity_key: &[u8], workspace_public_k
             "finding: {}",
             f.description
         );
+
+        // Milestone (d): Consent IPC. Detection alone (milestone c) doesn't
+        // act on anything yet — this is where the human is actually asked.
+        let approved = crate::consent::request(f).await;
+        let decided_at_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        // Audit trail entry (README Section 4.2: "Consent decisions and
+        // their outcomes are logged"). Local structured log only for now —
+        // reporting this back to the server as a real Consent Record
+        // (Section 8) needs the Postgres-backed data model, not yet built.
+        tracing::info!(
+            plugin_id = %f.plugin_id,
+            app = %f.app_name,
+            approved,
+            decided_at_unix,
+            "consent decision recorded"
+        );
+
+        // Milestone (e) turns an approved decision into an actual
+        // remediation action; for now, just note whether one would follow.
+        if approved {
+            tracing::info!(app = %f.app_name, "consent granted; remediation not yet implemented (milestone e)");
+        } else {
+            tracing::info!(app = %f.app_name, "consent not granted; no action taken");
+        }
     }
 
     Ok(())

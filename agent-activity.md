@@ -4,6 +4,21 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### React Admin Console PoC + full Podman stack (pivot from per-milestone dual-machine testing to a faster, single-pass build)
+
+- Scaffolded `admin-console/` (Vite + React + TypeScript): `Dashboard`, `Devices`, `Workspace` pages, `api.ts`/`hooks.ts` for typed fetches, dark-themed layout (`styles.css`). No new local Node.js toolchain needed — the build happens inside the Docker/Podman multi-stage build.
+- Extended `server/src/registry.rs`: `DeviceRecord` now tracks `hostname`, `os_version`, `last_checkin_unix`, `last_findings` alongside the cert (was cert-only); renamed methods to `insert_enrollment`/`get_cert`/added `record_checkin`/`list`/`count`. Updated `device_channel.rs` and `checkin_channel.rs` call sites accordingly.
+- Added `server/src/api.rs` (new): `GET /api/devices`, `GET /api/workspace` — plain `serde`-derived DTOs (not the prost types directly, which don't derive `Serialize`), reusing existing registry data. Workspace endpoint reports only whether a non-default enrollment token is configured, never the actual token/key.
+- Updated `server/src/main.rs`: added `tower-http::services::{ServeDir, ServeFile}` static-file serving with SPA fallback (`STATIC_DIR` env, default `./static`), merged the new API router alongside `/healthz`.
+- Added `deploy/Dockerfile.server` (new) — 3-stage build: `node:20-alpine` builds the React bundle, `rust:1-slim` builds the server (`cargo build --release -p server`), `debian:bookworm-slim` runtime copies both the binary and the built `dist/` as `./static`. Updated `deploy/docker-compose.yml`: added a `server` service (ports `8080`/`7777`/`7778`, `WORKSPACE_ENROLLMENT_TOKEN` env, `depends_on: postgres`).
+- Built and ran, all in WSL2/Podman (no lab1/dual-platform testing for this piece — server+web work only, Linux container target):
+  ```bash
+  wsl -d Ubuntu -- bash -c "cd ~/dev/nano-stack-7-tmp/deploy && podman-compose build server"   # succeeded first try — React build + release Rust build, ~20s compile
+  wsl -d Ubuntu -- bash -c "cd ~/dev/nano-stack-7-tmp/deploy && podman-compose up -d"           # postgres + server containers up
+  ```
+  Verified `/healthz`, `/api/workspace` (real JSON), and `/` (served `index.html` with the built JS bundle) via `curl` inside WSL2, then confirmed reachability from the Windows host directly (`Invoke-WebRequest http://localhost:8080/healthz` — WSL2's automatic localhost port forwarding). Loaded the page in the Claude Browser tool and confirmed the Dashboard rendered with live data, that direct navigation to `/devices` correctly hits the SPA fallback and client-side router (no 404), then enrolled a real test device (rebuilt/ran the WSL2 `client` binary against the container's exposed ports) and confirmed it appeared correctly in the Devices table (hostname, OS, device ID, enrolled/check-in timestamps).
+- Milestone (d) (Consent IPC — separate `consent-helper` binary using PowerShell's `System.Windows.Forms.MessageBox`, `client/src/consent.rs`/`src/bin/consent-helper.rs`, timeout-bounded so a non-interactive session can't hang the daemon) was implemented just before this pivot; compiles cleanly in WSL2 but interactive dialog behavior needs a real human at `lab1`'s console to verify — not yet done.
+
 ### Milestone (c) implemented: one hardcoded patch-management finding rule
 
 - Checked what's actually installed on `lab1` before hardcoding a target app, to avoid picking one that would need a fresh install just for the demo:

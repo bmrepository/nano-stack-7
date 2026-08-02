@@ -55,7 +55,7 @@ async fn handle_enrollment(
         workspace_signature: vec![],
     };
     let cert = cert::sign_certificate(&workspace.private_key, cert);
-    registry.insert(cert.clone());
+    registry.insert_enrollment(cert.clone(), request.hostname.clone(), request.os_version.clone());
 
     noise::send_message(
         &mut stream,

@@ -95,6 +95,7 @@ Two distinct secure channels exist in this system — this is an important clari
 **Admin Console (React)**
 - Similar UX category to Portainer/Rancher-style self-hosted admin tools.
 - Manages: workspaces, devices, plugins, users/roles, audit log, consent history.
+- **PoC implementation (2026-08-02)**: `admin-console/` (Vite + React + TypeScript) — Dashboard, Devices, Workspace pages, reading live data from two new server endpoints (`/api/devices`, `/api/workspace`). No auth/RBAC yet (that's the Phase 3 scope above); this is a fast MVP to review the direction, not the full spec'd console. The server serves the built React bundle directly (`tower-http::ServeDir` with SPA fallback) rather than a separate frontend container — one image, built via `deploy/Dockerfile.server`'s multi-stage build (Node stage builds the React app, Rust stage builds the server, final stage copies both). `deploy/docker-compose.yml` now has a `server` service alongside `postgres`; `podman-compose up -d` brings up the whole reviewable stack at `http://localhost:8080`.
 - Two roles at v1:
   - **Admin** — full control: create/delete workspaces, manage plugins, manage users, view all devices.
   - **Help Desk** — scoped operational role: view device status/inventory, initiate approved remediation actions, cannot manage workspace keys, plugins, or users.
