@@ -9,19 +9,19 @@
   and the tray icon assets into one installer, since the daemon expects
   consent-helper.exe/tray-helper.exe/ns7-icon-*.ico to sit alongside it.
 
-  Took two failed CI runs to land on working paths (confirmed via the
-  actual `light.exe` error text, not guesswork):
-  - Binaries: use cargo-wix's `$(var.CargoTargetBinDir)` variable — this
-    resolves correctly regardless of workspace nesting, so don't hand-write
-    a relative path to `target/release/` here.
-  - Icons: `ns7-icon-{light,dark}.ico` are duplicated into this `wix/`
-    directory (canonical copies live in `client/assets/`, used at runtime
-    by `tray-helper.rs`) and referenced by bare filename. Relative paths
-    like `..\assets\...\` failed with `LGHT0103: cannot find the file` —
-    whatever directory `light.exe` actually runs from, it isn't reliably
-    reachable via a fixed number of `..\` segments from this file's own
-    location, so a bare filename (same directory as this .wxs) was the
-    reliable fix.
+  **Every `Source`/`SourceFile` path here must use `$(var.CargoTargetBinDir)`.**
+  Learned across three failed CI runs: `light.exe` does NOT resolve these
+  paths relative to this .wxs file's own location — it uses its own working
+  directory, which is neither `client/` nor `client/wix/`. Both
+  `..\assets\ns7-icon-light.ico` and a bare `ns7-icon-light.ico` failed with
+  `LGHT0103: The system cannot find the file`, while `$(var.CargoTargetBinDir)`
+  worked for the binaries on the very first try.
+
+  Consequence for the icons: they're staged into the Cargo target bin dir by
+  a workflow step (`.github/workflows/release-client.yml`) before `cargo wix`
+  runs, so they can be referenced through that same known-good variable.
+  Canonical copies live in `client/assets/` (also what `tray-helper.rs`
+  expects next to the exe at runtime).
 -->
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
     <Product
@@ -63,10 +63,10 @@
                         <File Id='TrayHelperExe' Name='tray-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\tray-helper.exe' KeyPath='yes'/>
                     </Component>
                     <Component Id='IconLight' Guid='*' Win64='yes'>
-                        <File Id='IconLightFile' Name='ns7-icon-light.ico' DiskId='1' Source='ns7-icon-light.ico' KeyPath='yes'/>
+                        <File Id='IconLightFile' Name='ns7-icon-light.ico' DiskId='1' Source='$(var.CargoTargetBinDir)\ns7-icon-light.ico' KeyPath='yes'/>
                     </Component>
                     <Component Id='IconDark' Guid='*' Win64='yes'>
-                        <File Id='IconDarkFile' Name='ns7-icon-dark.ico' DiskId='1' Source='ns7-icon-dark.ico' KeyPath='yes'/>
+                        <File Id='IconDarkFile' Name='ns7-icon-dark.ico' DiskId='1' Source='$(var.CargoTargetBinDir)\ns7-icon-dark.ico' KeyPath='yes'/>
                     </Component>
                 </Directory>
             </Directory>
@@ -89,7 +89,7 @@
         </Feature>
 
         <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
-        <Icon Id='ProductICO' SourceFile='ns7-icon-light.ico'/>
+        <Icon Id='ProductICO' SourceFile='$(var.CargoTargetBinDir)\ns7-icon-light.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
     </Product>
 </Wix>

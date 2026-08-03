@@ -4,10 +4,10 @@
 # don't need to be provisioned anywhere else — no dependency on lab1 or any
 # other machine to cut a release.
 #
-# UNVERIFIED end-to-end: authored without a working local WiX build to test
-# against (see client/wix/main.wxs for details). Expect the first real run
-# to need at least one iteration — check the Actions log for the `cargo
-# wix` step if the release doesn't appear.
+# If a run fails, download the job log from the Actions UI and read the
+# actual error — three rounds of guessing at WiX path behavior from step
+# timings alone got nowhere, while the first look at real `light.exe`
+# output pinpointed it immediately.
 name: Release client installer
 
 on:
@@ -34,6 +34,20 @@ jobs:
 
       - name: Install cargo-wix
         run: cargo install cargo-wix
+
+      # Build explicitly first so target/release exists for the icon staging
+      # below. `cargo wix` re-runs the build itself, but that's an
+      # incremental no-op by then.
+      - name: Build client binaries
+        run: cargo build --release -p client
+
+      # light.exe resolves <File Source=...> against its own working
+      # directory, not the .wxs file's location — relative paths from
+      # client/wix/ failed repeatedly with LGHT0103. Staging the icons
+      # alongside the binaries lets main.wxs reference them via
+      # $(var.CargoTargetBinDir), the one path form confirmed to work here.
+      - name: Stage tray icons next to the built binaries
+        run: Copy-Item client\assets\ns7-icon-*.ico target\release\
 
       - name: Build MSI installer
         run: cargo wix -p client --nocapture --output nano-stack-7-client-installer.msi

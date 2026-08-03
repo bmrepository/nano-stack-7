@@ -4,6 +4,24 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Release workflow: fourth fix — stage icons into the Cargo target bin dir
+
+- Third attempt (bare filenames) also failed; user pasted the error directly:
+  ```
+  main.wxs(92) : error LGHT0103 : The system cannot find the file 'ns7-icon-light.ico'.
+  main.wxs(66) : error LGHT0103 : The system cannot find the file 'ns7-icon-light.ico'.
+  main.wxs(69) : error LGHT0103 : The system cannot find the file 'ns7-icon-dark.ico'.
+  ```
+  Note the compile step itself now succeeds (`Finished release profile ... in 52.28s`, candle runs clean) — only the linker's file resolution fails.
+- Ruled out the obvious alternative explanation before touching paths again: confirmed the `.ico` files really are in the repo and tracked, not silently dropped as binaries —
+  ```bash
+  curl -s -o /dev/null -w "HTTP %{http_code}  size=%{size_download}\n" "https://raw.githubusercontent.com/bmrepository/nano-stack-7/main/client/wix/ns7-icon-light.ico"   # HTTP 200  size=766
+  git ls-files client/wix client/assets   # both .ico files tracked in both dirs
+  ```
+- **Root cause (now unambiguous)**: `light.exe` resolves `Source`/`SourceFile` against *its own working directory*, not the `.wxs` file's location — and that directory is neither `client/` nor `client/wix/`. Two different relative forms failed, while `$(var.CargoTargetBinDir)` had worked for the binaries on the first try.
+- Fix — stop guessing paths entirely and reuse the one form proven to work: added `Build client binaries` (`cargo build --release -p client`) and `Stage tray icons next to the built binaries` (`Copy-Item client\assets\ns7-icon-*.ico target\release\`) steps to `.github/workflows/release-client.yml` before the `cargo wix` step, and changed all three icon references in `main.wxs` to `$(var.CargoTargetBinDir)\ns7-icon-*.ico`. Removed the now-unreferenced duplicate icons from `client/wix/` (`git rm`); canonical copies stay in `client/assets/`.
+- Updated both files' header comments to record the confirmed behavior, and replaced the workflow's stale "UNVERIFIED" note with guidance to pull the real job log first when debugging — the approach that actually worked.
+
 ### Release workflow: third fix, this time from real log text
 
 - User downloaded the actual job log from the GitHub UI (`C:\Temp\logs_83446804897\0_build-installer.txt`) and shared it directly, ending the blind API-based diagnosis loop. Found the real error via:
