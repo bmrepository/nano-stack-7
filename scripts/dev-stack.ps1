@@ -19,6 +19,9 @@
     rebuild  Rebuild the server image from source, then restart it
     logs     Tail the server log
     status   Show container status and the URLs to reach the stack
+    api      Expose podman's API to Windows so Podman Desktop can manage
+             these containers (run this if Podman Desktop reports "We could
+             not find any Podman machine")
 
 .EXAMPLE
     .\scripts\dev-stack.ps1 up
@@ -27,7 +30,7 @@
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("up", "down", "reset", "rebuild", "logs", "status")]
+    [ValidateSet("up", "down", "reset", "rebuild", "logs", "status", "api")]
     [string]$Action,
 
     [string]$Distro = "Ubuntu"
@@ -40,6 +43,8 @@ $ErrorActionPreference = "Stop"
 $WslWorkDir = '$HOME/dev/nano-stack-7'
 $Project = "ns7dev"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$PodmanApiPort = 8888
+$PodmanConnectionName = "wsl-ubuntu"
 
 function Invoke-Wsl {
     param([string]$Command, [switch]$AllowFailure)
@@ -72,6 +77,45 @@ function Invoke-Compose {
     Invoke-Wsl "cd $WslWorkDir/deploy && podman-compose -p $Project -f docker-compose.yml -f docker-compose.dev.yml $ComposeArgs" -AllowFailure:$AllowFailure
 }
 
+<#
+Starts podman's REST API inside the distro so Windows tooling — Podman
+Desktop, or podman.exe — can manage these containers.
+
+Needed because podman here is *rootless inside the Ubuntu distro*, not a
+"podman machine", so Podman Desktop finds nothing by default ("We could not
+find any Podman machine"). Exposing the API and registering a connection
+points it at the real stack instead of a separate, empty machine.
+
+Bound to 127.0.0.1 deliberately: the API is an unauthenticated container
+control plane, and with WSL2 mirrored networking a 0.0.0.0 bind would be
+reachable over the tailnet. Not socket-activated because this distro runs
+without systemd, so it's started on demand here instead.
+#>
+function Ensure-PodmanApi {
+    $listening = wsl -d $Distro -- bash -lc "ss -tln 2>/dev/null | grep -q '127.0.0.1:$PodmanApiPort' && echo yes || echo no"
+    if ($listening -match "yes") {
+        Write-Host "Podman API already listening on 127.0.0.1:$PodmanApiPort" -ForegroundColor DarkGray
+    } else {
+        Write-Host "Starting Podman API on 127.0.0.1:$PodmanApiPort ..." -ForegroundColor Cyan
+        Invoke-Wsl "setsid nohup podman system service --time=0 tcp://127.0.0.1:$PodmanApiPort >/tmp/podman-api.log 2>&1 < /dev/null & sleep 2" -AllowFailure
+    }
+
+    $podmanExe = Get-Command podman -ErrorAction SilentlyContinue
+    if (-not $podmanExe) {
+        Write-Host "podman.exe not found on PATH — skipping Windows connection setup." -ForegroundColor Yellow
+        return
+    }
+
+    $connections = (& podman system connection ls 2>&1 | Out-String)
+    if ($connections -match [regex]::Escape($PodmanConnectionName)) {
+        Write-Host "Windows podman connection '$PodmanConnectionName' already registered." -ForegroundColor DarkGray
+    } else {
+        & podman system connection add $PodmanConnectionName "tcp://127.0.0.1:$PodmanApiPort" 2>&1 | Out-Null
+        & podman system connection default $PodmanConnectionName 2>&1 | Out-Null
+        Write-Host "Registered Windows podman connection '$PodmanConnectionName'." -ForegroundColor Green
+    }
+}
+
 function Show-Status {
     Invoke-Wsl "podman ps --filter name=$Project --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'" -AllowFailure
     Write-Host ""
@@ -93,7 +137,15 @@ switch ($Action) {
         Sync-Source
         Write-Host "Starting dev stack ..." -ForegroundColor Cyan
         Invoke-Compose "up -d"
+        Ensure-PodmanApi
         Show-Status
+    }
+    "api" {
+        Ensure-PodmanApi
+        Write-Host ""
+        Write-Host "Podman Desktop should now list these containers. If it still says" -ForegroundColor DarkGray
+        Write-Host "'could not find any Podman machine', restart Podman Desktop." -ForegroundColor DarkGray
+        & podman ps --format "table {{.Names}}`t{{.Status}}" 2>&1
     }
     "down" {
         Invoke-Compose "down" -AllowFailure

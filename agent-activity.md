@@ -4,6 +4,17 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-03
 
+### Verified prod release chain + fixed Podman Desktop
+
+- **Confirmed the client MSI pipeline finally works end to end.** `Release client installer` succeeded on tags `v0.1.2` and `v0.1.3`; the release asset is published (`nano-stack-7-client-installer.msi`, 962,560 bytes) and the stable URL the Admin Console links to (`/releases/latest/download/nano-stack-7-client-installer.msi`) returns HTTP 200. This closes out the original "no installer at that URL" report.
+- **Confirmed the new `Publish server image` workflow succeeded** on `main` and that the image is *anonymously* pullable — important because GHCR packages default to private even from a public repo, which would have made Portainer fail to pull. Verified two ways: fetched an anonymous GHCR pull token and got HTTP 200 on the manifest (tags present: `latest`, `sha-885cc94`), then did a real `podman pull ghcr.io/bmrepository/nano-stack-7-server:latest`, which succeeded. So Portainer needs no registry credentials.
+- **User confirmed lab1 → dev-stack networking works** after running `setup-dev-networking.ps1`: `curl http://100.98.74.19:8080/healthz` from lab1 returned HTTP 200. WSL2 mirrored networking did the job.
+- **Fixed Podman Desktop's "We could not find any Podman machine" error.** Investigated before prescribing anything: Windows has `podman.exe` 6.0.2 installed but with *zero* connections and *zero* machines, while the actual podman (5.7.0) is rootless inside the `Ubuntu` WSL2 distro, which has no systemd (so no socket activation) and no listening API socket. Podman Desktop therefore had nothing to attach to. Deliberately did **not** create a podman machine — that would be a second, empty podman that doesn't run the dev stack, defeating the user's goal of managing *these* containers.
+  - Fix, tested manually first: started `podman system service --time=0 tcp://127.0.0.1:8888` inside the distro, then `podman system connection add wsl-ubuntu tcp://127.0.0.1:8888` + `connection default` on Windows. Confirmed Windows `podman.exe` then listed the real dev containers (`ns7dev_postgres_1`, `ns7dev_server_1`) — and that the 5.7.0-server/6.0.2-client version skew is not a problem over the REST API.
+  - Folded it into `scripts/dev-stack.ps1` as an idempotent `Ensure-PodmanApi` helper plus a new `api` action; `up` now calls it automatically. Bound to `127.0.0.1` deliberately, with an in-code comment explaining why: the podman API is an unauthenticated container control plane and mirrored networking would expose a `0.0.0.0` bind to the whole tailnet.
+  - Re-tested the `api` action after `pkill`-ing the manually started service, so the start path (not just the already-running path) was exercised.
+  - Documented in README Section 13.5, including why creating a machine is the wrong fix and that `api` needs re-running after `wsl --shutdown` (no systemd → not socket-activated).
+
 ### Dev/prod environment split + release flow
 
 Goal (from the user): be able to test dev *and* prod versions before pushing to production. Dev = server stack in WSL2/Podman on the dev PC with the client on `lab1`; prod = Portainer stack on `192.168.0.101` with the released MSI validated on the dev PC.

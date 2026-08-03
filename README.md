@@ -457,7 +457,7 @@ Note the deliberate inversion on the client side: **dev** iterates fast on `lab1
 | Script | Purpose |
 |---|---|
 | `scripts/setup-dev-networking.ps1` | **One-time, run as admin.** Enables WSL2 mirrored networking + firewall rules so `lab1` can reach the dev stack. Without this, WSL2's NAT networking makes the dev server reachable only from the dev PC's own localhost. |
-| `scripts/dev-stack.ps1 <up\|down\|reset\|rebuild\|logs\|status>` | Manages the dev server stack. `rebuild` is the inner-loop command after changing server or console code; `status` prints the address to enter in the client's setup dialog. |
+| `scripts/dev-stack.ps1 <up\|down\|reset\|rebuild\|logs\|status\|api>` | Manages the dev server stack. `rebuild` is the inner-loop command after changing server or console code; `status` prints the address to enter in the client's setup dialog; `api` wires up Podman Desktop (see below). |
 | `scripts/dev-client.ps1 -WorkspaceId <id>` | Syncs, builds and runs the client on `lab1` against the dev stack. `-NoRun` builds only (then launch from lab1's own console to see the tray icon/dialogs — SSH sessions can't display UI); `-FreshEnrollment` clears saved client state first. |
 | `dunow.ps1 -Message "..."` | Commits, pushes `dev`, merges to `main`, pushes `main` — the promotion step. |
 
@@ -471,3 +471,19 @@ Note the deliberate inversion on the client side: **dev** iterates fast on `lab1
 6. **Validate prod client**: install that MSI on the dev PC, point it at `192.168.0.101`, and confirm enrollment against production.
 
 **Rollback**: prod's compose file references `:latest`, so to pin an older build, change the `server` image tag to a specific `:<short-sha>` and redeploy.
+
+#### Podman Desktop (managing the dev stack from Windows)
+
+Podman Desktop reports **"We could not find any Podman machine"** on this setup, and creating one would be the wrong fix. Podman here is *rootless inside the `Ubuntu` WSL2 distro* — not a Podman-managed machine — so Podman Desktop has nothing to attach to, and a new machine would be a second, empty podman that doesn't run the dev stack.
+
+The fix is to expose the distro's podman API and register it as a connection:
+
+```powershell
+.\scripts\dev-stack.ps1 api
+```
+
+That starts `podman system service` on `127.0.0.1:8888` inside the distro and adds a `wsl-ubuntu` connection for Windows' `podman.exe`, which Podman Desktop reads too. `dev-stack.ps1 up` does this automatically; run `api` on its own after a `wsl --shutdown` (the service isn't socket-activated, since this distro runs without systemd) or if Podman Desktop loses the connection. Restart Podman Desktop once after the first run.
+
+Two deliberate choices worth knowing:
+- **Bound to `127.0.0.1`, never `0.0.0.0`.** The podman API is an unauthenticated container control plane; with mirrored networking enabled, a wildcard bind would expose it to the whole tailnet.
+- **Version skew is fine.** Windows `podman.exe` (6.x) talks to the distro's podman (5.x) over the REST API without issue — verified listing the running dev containers.
