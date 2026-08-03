@@ -2,66 +2,73 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::StatusCode;
 use rand::RngCore;
+use sqlx::{PgPool, Row};
 use std::collections::HashSet;
 use std::sync::Mutex;
 
 /// Portainer-style admin auth: whoever completes setup first becomes the
-/// (single) admin. No DB yet — same in-memory placeholder pattern as
-/// `workspace::WorkspaceConfig` and `registry::Registry`; doesn't survive a
-/// server restart. No session expiry either — fine for a PoC, not for real
-/// use once this becomes durable.
-#[derive(Default)]
+/// (single) admin.
+///
+/// The account itself is persisted in Postgres, so it survives container
+/// recreation. Sessions stay in memory deliberately — being logged out by a
+/// server restart is normal and expected behavior, unlike losing the
+/// account entirely. No session expiry yet, which is fine for a PoC but
+/// wants a real TTL before this is exposed anywhere untrusted.
 pub struct AuthStore {
-    admin: Mutex<Option<AdminAccount>>,
+    pool: PgPool,
     sessions: Mutex<HashSet<String>>,
 }
 
-struct AdminAccount {
-    username: String,
-    password_hash: String,
-}
-
 impl AuthStore {
-    pub fn admin_exists(&self) -> bool {
-        self.admin.lock().expect("auth mutex poisoned").is_some()
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            pool,
+            sessions: Mutex::new(HashSet::new()),
+        }
+    }
+
+    pub async fn admin_exists(&self) -> anyhow::Result<bool> {
+        let row = sqlx::query("SELECT COUNT(*) AS count FROM admin_accounts")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") > 0)
     }
 
     /// Creates the admin account if (and only if) none exists yet, and
     /// returns a fresh session token (auto-login after setup, matching
-    /// Portainer's UX). Double-checks under lock to close the race between
-    /// two concurrent setup requests.
-    pub fn create_admin(&self, username: String, password: &str) -> Result<String, &'static str> {
-        {
-            let admin = self.admin.lock().expect("auth mutex poisoned");
-            if admin.is_some() {
-                return Err("admin account already exists");
-            }
+    /// Portainer's UX).
+    pub async fn create_admin(&self, username: String, password: &str) -> anyhow::Result<String> {
+        if self.admin_exists().await? {
+            anyhow::bail!("admin account already exists");
         }
 
-        let password_hash =
-            bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|_| "failed to hash password")?;
+        let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
 
-        let mut admin = self.admin.lock().expect("auth mutex poisoned");
-        if admin.is_some() {
-            return Err("admin account already exists");
-        }
-        *admin = Some(AdminAccount { username, password_hash });
-        drop(admin);
+        // The unique PK plus this insert closes the race between two
+        // concurrent setup requests: the second one fails outright rather
+        // than silently overwriting the first admin's credentials.
+        sqlx::query("INSERT INTO admin_accounts (username, password_hash) VALUES ($1, $2)")
+            .bind(&username)
+            .bind(&password_hash)
+            .execute(&self.pool)
+            .await?;
 
         Ok(self.new_session())
     }
 
-    pub fn verify_login(&self, username: &str, password: &str) -> Option<String> {
-        let matches = {
-            let admin = self.admin.lock().expect("auth mutex poisoned");
-            let account = admin.as_ref()?;
-            account.username == username && bcrypt::verify(password, &account.password_hash).unwrap_or(false)
-        };
+    pub async fn verify_login(&self, username: &str, password: &str) -> anyhow::Result<Option<String>> {
+        let row = sqlx::query("SELECT password_hash FROM admin_accounts WHERE username = $1")
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        if matches {
-            Some(self.new_session())
+        let Some(row) = row else { return Ok(None) };
+        let hash: String = row.get("password_hash");
+
+        if bcrypt::verify(password, &hash).unwrap_or(false) {
+            Ok(Some(self.new_session()))
         } else {
-            None
+            Ok(None)
         }
     }
 

@@ -1,9 +1,12 @@
 mod checkin;
+mod config;
 mod consent;
 mod identity;
 mod inventory;
+mod setup;
 mod tray;
 
+use config::ClientConfig;
 use shared_proto::{noise, EnrollmentRequest, EnrollmentResponse};
 use tokio::net::TcpStream;
 
@@ -15,34 +18,62 @@ async fn main() -> anyhow::Result<()> {
 
     tray::spawn();
 
-    let server_addr = std::env::var("SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:7777".to_string());
+    let config = resolve_config()?;
+    tracing::info!(
+        server_host = %config.server_host,
+        workspace_id = %config.workspace_id,
+        "client configured"
+    );
+
     let identity_key = identity::load_or_generate()?;
 
     if !identity::is_enrolled() {
-        enroll(&server_addr, &identity_key).await?;
+        enroll(&config, &identity_key).await?;
     } else {
         tracing::info!("already enrolled; skipping enrollment");
     }
 
-    run_checkin_scheduler(&identity_key).await
+    run_checkin_scheduler(&config, &identity_key).await
 }
 
-async fn enroll(server_addr: &str, identity_key: &[u8]) -> anyhow::Result<()> {
-    // The workspace ID doubles as the enrollment credential (README
-    // Section 4.2) — there's no meaningful default to fall back to, since
-    // it doesn't exist until an admin creates the workspace in the Admin
-    // Console. Get it from Devices → your workspace → copy ID.
-    let workspace_id = std::env::var("WORKSPACE_ID")
-        .map_err(|_| anyhow::anyhow!("WORKSPACE_ID must be set — copy it from the workspace's page in the Admin Console"))?;
+/// Config resolution order: env vars (for dev/CI, and to keep the existing
+/// automated test flow working) → saved config file → interactive setup
+/// dialog on first run.
+fn resolve_config() -> anyhow::Result<ClientConfig> {
+    if let (Ok(host), Ok(workspace_id)) = (
+        std::env::var("NS7_SERVER_HOST"),
+        std::env::var("WORKSPACE_ID"),
+    ) {
+        return Ok(ClientConfig {
+            server_host: host,
+            workspace_id,
+        });
+    }
 
+    if let Some(existing) = config::load() {
+        if !existing.workspace_id.is_empty() {
+            return Ok(existing);
+        }
+    }
+
+    tracing::info!("no configuration found; launching first-run setup");
+    let config = setup::prompt(None)
+        .ok_or_else(|| anyhow::anyhow!("setup cancelled — a server address and workspace ID are required"))?;
+    let path = config::save(&config)?;
+    tracing::info!(path = ?path, "configuration saved");
+    Ok(config)
+}
+
+async fn enroll(config: &ClientConfig, identity_key: &[u8]) -> anyhow::Result<()> {
+    let server_addr = config.enrollment_addr();
     tracing::info!(server_addr, "connecting for enrollment");
-    let mut stream = TcpStream::connect(server_addr).await?;
+    let mut stream = TcpStream::connect(&server_addr).await?;
 
     let (mut transport, workspace_public_key) = noise::handshake_xx_initiator(&mut stream, identity_key).await?;
     tracing::info!("Noise_XX handshake complete");
 
     let request = EnrollmentRequest {
-        workspace_id,
+        workspace_id: config.workspace_id.clone(),
         hostname: hostname::get()?.to_string_lossy().into_owned(),
         os_version: std::env::consts::OS.to_string(),
     };
@@ -66,9 +97,8 @@ async fn enroll(server_addr: &str, identity_key: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_checkin_scheduler(identity_key: &[u8]) -> anyhow::Result<()> {
-    let server_addr =
-        std::env::var("CHECKIN_SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:7778".to_string());
+async fn run_checkin_scheduler(config: &ClientConfig, identity_key: &[u8]) -> anyhow::Result<()> {
+    let server_addr = config.checkin_addr();
     let interval_secs = std::env::var("CHECKIN_INTERVAL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())

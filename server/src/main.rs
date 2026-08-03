@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod checkin_channel;
+mod db;
 mod device_channel;
 mod finding;
 mod registry;
@@ -18,10 +19,12 @@ use workspace::WorkspaceStore;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let identity = Arc::new(workspace::load_server_identity());
-    let workspaces = Arc::new(WorkspaceStore::default());
-    let registry = Arc::new(Registry::default());
-    let auth = Arc::new(AuthStore::default());
+    let pool = db::connect().await?;
+
+    let identity = Arc::new(workspace::load_server_identity(&pool).await?);
+    let workspaces = Arc::new(WorkspaceStore::new(pool.clone()));
+    let registry = Arc::new(Registry::new(pool.clone()));
+    let auth = Arc::new(AuthStore::new(pool));
 
     let admin_api = tokio::spawn(run_admin_api(workspaces.clone(), registry.clone(), auth));
     let enrollment = tokio::spawn(device_channel::run(

@@ -1,12 +1,5 @@
+use crate::config::state_dir;
 use std::path::PathBuf;
-
-/// PoC-only local state directory (relative to the working directory the
-/// daemon is run from). TODO: move to a proper per-OS app-data location
-/// (e.g. %ProgramData%\NanoStack7 on Windows) once this becomes a real
-/// installed service rather than a milestone prototype.
-fn state_dir() -> PathBuf {
-    PathBuf::from("device-identity")
-}
 
 /// Loads this device's persisted X25519 identity keypair, generating and
 /// persisting a new one on first run.

@@ -32,6 +32,7 @@ async fn handle_checkin(mut stream: TcpStream, identity: &ServerIdentity, regist
     // and that certificate must still verify against the server's identity.
     let existing_cert = registry
         .get_cert(&device_public_key)
+        .await?
         .ok_or_else(|| anyhow::anyhow!("check-in from a device with no known certificate"))?;
 
     if !cert::verify_certificate(&identity.private_key, &existing_cert) {
@@ -64,13 +65,15 @@ async fn handle_checkin(mut stream: TcpStream, identity: &ServerIdentity, regist
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
 
-    registry.record_checkin(
-        &device_public_key,
-        inventory.hostname.clone(),
-        inventory.os_version.clone(),
-        findings.clone(),
-        server_time_unix,
-    );
+    registry
+        .record_checkin(
+            &device_public_key,
+            inventory.hostname.clone(),
+            inventory.os_version.clone(),
+            findings.clone(),
+            server_time_unix,
+        )
+        .await?;
 
     noise::send_message(
         &mut stream,

@@ -62,6 +62,9 @@
                     <Component Id='TrayHelperExe' Guid='*' Win64='yes'>
                         <File Id='TrayHelperExe' Name='tray-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\tray-helper.exe' KeyPath='yes'/>
                     </Component>
+                    <Component Id='SetupHelperExe' Guid='*' Win64='yes'>
+                        <File Id='SetupHelperExe' Name='setup-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\setup-helper.exe' KeyPath='yes'/>
+                    </Component>
                     <Component Id='IconLight' Guid='*' Win64='yes'>
                         <File Id='IconLightFile' Name='ns7-icon-light.ico' DiskId='1' Source='$(var.CargoTargetBinDir)\ns7-icon-light.ico' KeyPath='yes'/>
                     </Component>
@@ -70,7 +73,43 @@
                     </Component>
                 </Directory>
             </Directory>
+
+            <!-- Shortcuts. Without these the MSI only copied files and
+                 nothing ever ran, so the tray icon never appeared after a
+                 fresh install. The Startup entry means the agent comes back
+                 automatically at each logon, standing in for the real
+                 Windows Service registration that arrives with the elevated
+                 service model (README Section 10, decision 3). -->
+            <Directory Id='ProgramMenuFolder'>
+                <Directory Id='ApplicationProgramsFolder' Name='Nano Stack 7'/>
+            </Directory>
+            <Directory Id='StartupFolder'/>
         </Directory>
+
+        <DirectoryRef Id='ApplicationProgramsFolder'>
+            <Component Id='StartMenuShortcut' Guid='*'>
+                <Shortcut Id='StartMenuShortcutItem'
+                    Name='Nano Stack 7 Client'
+                    Description='Start the Nano Stack 7 client agent'
+                    Target='[APPLICATIONFOLDER]client.exe'
+                    WorkingDirectory='APPLICATIONFOLDER'
+                    Icon='ProductICO'/>
+                <RemoveFolder Id='RemoveApplicationProgramsFolder' Directory='ApplicationProgramsFolder' On='uninstall'/>
+                <RegistryValue Root='HKCU' Key='Software\NanoStack7' Name='StartMenuShortcut' Type='integer' Value='1' KeyPath='yes'/>
+            </Component>
+        </DirectoryRef>
+
+        <DirectoryRef Id='StartupFolder'>
+            <Component Id='StartupShortcut' Guid='*'>
+                <Shortcut Id='StartupShortcutItem'
+                    Name='Nano Stack 7 Client'
+                    Description='Nano Stack 7 client agent'
+                    Target='[APPLICATIONFOLDER]client.exe'
+                    WorkingDirectory='APPLICATIONFOLDER'
+                    Icon='ProductICO'/>
+                <RegistryValue Root='HKCU' Key='Software\NanoStack7' Name='StartupShortcut' Type='integer' Value='1' KeyPath='yes'/>
+            </Component>
+        </DirectoryRef>
 
         <Feature
             Id='Binaries'
@@ -84,8 +123,11 @@
             <ComponentRef Id='ClientExe'/>
             <ComponentRef Id='ConsentHelperExe'/>
             <ComponentRef Id='TrayHelperExe'/>
+            <ComponentRef Id='SetupHelperExe'/>
             <ComponentRef Id='IconLight'/>
             <ComponentRef Id='IconDark'/>
+            <ComponentRef Id='StartMenuShortcut'/>
+            <ComponentRef Id='StartupShortcut'/>
         </Feature>
 
         <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>

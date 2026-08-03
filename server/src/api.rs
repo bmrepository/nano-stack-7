@@ -3,7 +3,7 @@ use crate::registry::Registry;
 use crate::workspace::WorkspaceStore;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -13,6 +13,13 @@ pub struct ApiState {
     pub workspaces: Arc<WorkspaceStore>,
     pub registry: Arc<Registry>,
     pub auth: Arc<AuthStore>,
+}
+
+/// Database errors shouldn't leak details to the client, but they do need
+/// to be visible somewhere — log the real error, return a generic 500.
+fn internal_error(context: &str, e: anyhow::Error) -> (StatusCode, &'static str) {
+    tracing::error!(context, error = %e, "request failed");
+    (StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
 }
 
 #[derive(Serialize)]
@@ -40,7 +47,7 @@ struct WorkspaceDto {
     id: String,
     name: String,
     created_at_unix: i64,
-    device_count: usize,
+    device_count: i64,
 }
 
 #[derive(Deserialize)]
@@ -86,10 +93,13 @@ pub fn router(state: ApiState) -> Router {
         .with_state(state)
 }
 
-async fn auth_status(State(state): State<ApiState>) -> Json<AuthStatusDto> {
-    Json(AuthStatusDto {
-        admin_exists: state.auth.admin_exists(),
-    })
+async fn auth_status(State(state): State<ApiState>) -> Result<Json<AuthStatusDto>, (StatusCode, &'static str)> {
+    let admin_exists = state
+        .auth
+        .admin_exists()
+        .await
+        .map_err(|e| internal_error("auth_status", e))?;
+    Ok(Json(AuthStatusDto { admin_exists }))
 }
 
 async fn auth_setup(
@@ -103,11 +113,13 @@ async fn auth_setup(
         ));
     }
 
-    state
-        .auth
-        .create_admin(body.username, &body.password)
-        .map(|token| Json(SessionDto { token }))
-        .map_err(|e| (StatusCode::CONFLICT, e))
+    match state.auth.create_admin(body.username, &body.password).await {
+        Ok(token) => Ok(Json(SessionDto { token })),
+        Err(e) => {
+            tracing::warn!(error = %e, "admin setup rejected");
+            Err((StatusCode::CONFLICT, "admin account already exists"))
+        }
+    }
 }
 
 async fn auth_login(
@@ -117,14 +129,21 @@ async fn auth_login(
     state
         .auth
         .verify_login(&body.username, &body.password)
+        .await
+        .map_err(|e| internal_error("auth_login", e))?
         .map(|token| Json(SessionDto { token }))
         .ok_or((StatusCode::UNAUTHORIZED, "invalid username or password"))
 }
 
-async fn list_devices(State(state): State<ApiState>, _auth: RequireAuth) -> Json<Vec<DeviceDto>> {
+async fn list_devices(
+    State(state): State<ApiState>,
+    _auth: RequireAuth,
+) -> Result<Json<Vec<DeviceDto>>, (StatusCode, &'static str)> {
     let devices = state
         .registry
         .list()
+        .await
+        .map_err(|e| internal_error("list_devices", e))?
         .into_iter()
         .map(|record| DeviceDto {
             device_id: record.cert.device_id,
@@ -147,27 +166,35 @@ async fn list_devices(State(state): State<ApiState>, _auth: RequireAuth) -> Json
         })
         .collect();
 
-    Json(devices)
+    Ok(Json(devices))
 }
 
-fn workspace_dto(w: crate::workspace::Workspace, registry: &Registry) -> WorkspaceDto {
-    let device_count = registry.list().into_iter().filter(|d| d.cert.workspace_id == w.id).count();
-    WorkspaceDto {
-        id: w.id,
-        name: w.name,
-        created_at_unix: w.created_at_unix,
-        device_count,
-    }
-}
-
-async fn list_workspaces(State(state): State<ApiState>, _auth: RequireAuth) -> Json<Vec<WorkspaceDto>> {
+async fn list_workspaces(
+    State(state): State<ApiState>,
+    _auth: RequireAuth,
+) -> Result<Json<Vec<WorkspaceDto>>, (StatusCode, &'static str)> {
     let workspaces = state
         .workspaces
         .list()
-        .into_iter()
-        .map(|w| workspace_dto(w, &state.registry))
-        .collect();
-    Json(workspaces)
+        .await
+        .map_err(|e| internal_error("list_workspaces", e))?;
+
+    let mut dtos = Vec::with_capacity(workspaces.len());
+    for w in workspaces {
+        let device_count = state
+            .registry
+            .count_for_workspace(&w.id)
+            .await
+            .map_err(|e| internal_error("list_workspaces/count", e))?;
+        dtos.push(WorkspaceDto {
+            id: w.id,
+            name: w.name,
+            created_at_unix: w.created_at_unix,
+            device_count,
+        });
+    }
+
+    Ok(Json(dtos))
 }
 
 async fn create_workspace(
@@ -178,8 +205,18 @@ async fn create_workspace(
     if body.name.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "workspace name is required"));
     }
-    let workspace = state.workspaces.create(body.name);
-    Ok(Json(workspace_dto(workspace, &state.registry)))
+    let workspace = state
+        .workspaces
+        .create(body.name)
+        .await
+        .map_err(|e| internal_error("create_workspace", e))?;
+
+    Ok(Json(WorkspaceDto {
+        id: workspace.id,
+        name: workspace.name,
+        created_at_unix: workspace.created_at_unix,
+        device_count: 0,
+    }))
 }
 
 async fn rename_workspace(
@@ -191,7 +228,13 @@ async fn rename_workspace(
     if body.name.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "workspace name is required"));
     }
-    if state.workspaces.rename(&id, body.name) {
+    let renamed = state
+        .workspaces
+        .rename(&id, body.name)
+        .await
+        .map_err(|e| internal_error("rename_workspace", e))?;
+
+    if renamed {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((StatusCode::NOT_FOUND, "workspace not found"))
@@ -203,9 +246,16 @@ async fn delete_workspace(
     _auth: RequireAuth,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, &'static str)> {
-    if state.workspaces.delete(&id) {
-        // Immediate revocation cascade (README Section 10, decision 4).
-        state.registry.remove_by_workspace(&id);
+    // Devices are removed by the schema's ON DELETE CASCADE — the immediate
+    // revocation policy (README Section 10, decision 4) is enforced by the
+    // database rather than a second explicit query.
+    let deleted = state
+        .workspaces
+        .delete(&id)
+        .await
+        .map_err(|e| internal_error("delete_workspace", e))?;
+
+    if deleted {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((StatusCode::NOT_FOUND, "workspace not found"))

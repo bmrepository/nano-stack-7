@@ -43,6 +43,7 @@ async fn handle_enrollment(
 
     let workspace = workspaces
         .find_by_id(&request.workspace_id)
+        .await?
         .ok_or_else(|| anyhow::anyhow!("unknown workspace id presented by host '{}'", request.hostname))?;
 
     let device_id = uuid::Uuid::new_v4().to_string();
@@ -58,7 +59,9 @@ async fn handle_enrollment(
         workspace_signature: vec![],
     };
     let cert = cert::sign_certificate(&identity.private_key, cert);
-    registry.insert_enrollment(cert.clone(), request.hostname.clone(), request.os_version.clone());
+    registry
+        .insert_enrollment(cert.clone(), request.hostname.clone(), request.os_version.clone())
+        .await?;
 
     noise::send_message(
         &mut stream,

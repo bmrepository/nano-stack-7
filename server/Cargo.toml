@@ -17,3 +17,10 @@ uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
 hex = "0.4"
 bcrypt = "0.15"
+serde_json = "1"
+# `macros` is required for the `sqlx::migrate!` macro, which embeds the
+# migrations directory into the binary at compile time — necessary because
+# the runtime container image only copies the binary, not the source tree.
+# All queries here use the runtime `sqlx::query()` API, not `query!`, so no
+# live database is needed at build time.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros"] }

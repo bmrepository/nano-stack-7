@@ -1,25 +1,43 @@
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: nanostack7
       POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: nanostack7
     ports:
       - "5432:5432"
+    # Named volume — this is what makes admin accounts, workspaces and
+    # enrolled devices survive a Portainer "pull and redeploy" (which
+    # recreates containers but leaves named volumes intact).
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    # Informational only (shows in Portainer's UI). Deliberately NOT used as
+    # a `depends_on: condition: service_healthy` gate: podman implements
+    # healthchecks via systemd timers, so under rootless podman in WSL2
+    # (no systemd) the state never leaves "starting" and the dependent
+    # service would wait forever. The server retries its own database
+    # connection instead — see server/src/db.rs.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nanostack7"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   server:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
+    restart: unless-stopped
     ports:
       - "8080:8080" # Admin API + React Admin Console
       - "7777:7777" # Device enrollment channel (Noise_XX)
       - "7778:7778" # Device check-in channel (Noise_IK)
     environment:
-      WORKSPACE_ENROLLMENT_TOKEN: dev-enrollment-token
+      DATABASE_URL: postgres://nanostack7:devpassword@postgres:5432/nanostack7
+    # Start ordering only — readiness is handled by the server's own
+    # connection retry loop (see the healthcheck note above).
     depends_on:
       - postgres
 
