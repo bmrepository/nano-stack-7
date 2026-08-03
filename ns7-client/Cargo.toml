@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-shared-proto = { path = "../shared-proto" }
+shared-proto = { path = "../shared/proto" }
 tokio = { version = "1", features = ["full"] }
 snow = "0.9"
 prost = "0.13"

@@ -54,7 +54,7 @@ jobs:
       # alongside the binaries lets main.wxs reference them via
       # $(var.CargoTargetBinDir), the one path form confirmed to work here.
       - name: Stage tray icons next to the built binaries
-        run: Copy-Item client\assets\ns7-icon-*.ico target\release\
+        run: Copy-Item ns7-client\assets\ns7-icon-*.ico target\release\
 
       - name: Build MSI installer
         run: cargo wix -p client --nocapture --output nano-stack-7-client-installer.msi

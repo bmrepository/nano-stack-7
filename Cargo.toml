@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["shared-proto", "server", "client"]
+# Two product sections plus the wire format they share:
+#   ns7-client  - the standalone application (works with no server at all)
+#   ns7-server  - the optional Admin Console stack that can orchestrate clients
+#   shared/proto - device-channel protocol, the only thing both depend on
+members = ["shared/proto", "ns7-server", "ns7-client"]
 
 [workspace.package]
 version = "0.1.0"

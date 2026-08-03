@@ -1,8 +1,82 @@
 # Nano Stack 7
 
-**Status:** Draft v0.2 — Requirements confirmed (Section 10), Phase 1 PoC scoping in progress, no code yet
+**Status:** Draft v0.3 — **Standalone-first architecture confirmed 2026-08-03** (see Section 0); Phase 1 PoC implemented, migration to standalone-first in progress
 **Project name:** Nano Stack 7 (confirmed)
 **License intent:** Open source (license TBD — MIT/Apache-2.0 dual license is typical for Rust OSS)
+
+---
+
+## 0. Architecture Inversion: Standalone-First (Confirmed 2026-08-03)
+
+**This supersedes the server-centric framing in the rest of this document.** Sections written before this date describe the client as a managed agent that requires enrollment; that is no longer the primary model. Where they conflict, this section wins.
+
+### The model
+
+| | Before | **Now** |
+|---|---|---|
+| Primary product | Server stack; client was its agent | **The client is the product.** It is a complete, standalone application. |
+| Enrollment | Required before the client did anything | **Optional.** A device may never contact a server. |
+| Where config lives | Server database, pushed to the client | **100% in the client's `NS7Conf.toml`.** |
+| Where detection runs | Server evaluated findings from reported inventory | **On the device.** All plugins run locally. |
+| The server's role | The system | **An optional orchestration layer** that can remotely edit the local config of enrolled devices. |
+
+Every feature and every plugin must be fully available with no server present. If a capability only works when enrolled, that is a bug in the design, not a tier.
+
+### Why this changes the code, not just the docs
+
+Two things were built server-side as PoC shortcuts and have to move:
+
+- **`ns7-server/src/finding.rs`** evaluated findings from inventory the client uploaded. Detection must run on the device, so this logic moves into the client's plugin runtime.
+- **`ns7-server/src/plugins.rs`** was the source of truth for which plugins are enabled and their consent tiers. That is now `NS7Conf.toml`; the server merely *edits* that file remotely for enrolled devices.
+
+This actually re-aligns the implementation with Section 4.2, which always said plugins are compiled into the client binary — running detection server-side was the deviation.
+
+### Config authority
+
+The TOML is always the thing the agent reads. Enrollment changes only who may write to parts of it:
+
+- **Standalone** (`StandaloneMode = true`) — the file is entirely the user's.
+- **Enrolled** (`StandaloneMode = false`) — the server owns exactly the sections listed in `[managed].owned_sections` and overwrites them on each check-in. Everything else stays local and is never touched, so enrolling a device does not silently discard its existing configuration.
+
+### First run
+
+Installing the app no longer demands a server address. It opens the UI at the **Agent** section, where the user chooses Standalone or Connect to a workspace — and can change that choice later in the same place.
+
+### Repository layout
+
+Two product sections plus the one thing they share:
+
+```text
+ns7-client/     # The standalone application. Builds and ships with no
+                # knowledge of, or dependency on, the server.
+  src/          #   daemon + plugin runtime
+  src/bin/      #   UI helper processes (status, setup, consent, tray)
+  assets/       #   tray icons
+  wix/          #   Windows installer definition
+  NS7Conf.reference.toml   # documented schema: every setting, default and allowed value
+
+ns7-server/     # The OPTIONAL Admin Console stack.
+  src/          #   Axum API + Noise device channels
+  admin-console/#   React console
+  deploy/       #   Dockerfile + compose (the Portainer-tracked stack)
+  migrations/   #   Postgres schema
+
+shared/proto/   # Device-channel wire format - the only shared dependency.
+```
+
+`ns7-client` does not depend on `ns7-server`; both depend on `shared/proto`. That direction is enforced by the crate graph, so the client cannot accidentally grow a server dependency.
+
+### Plugin configuration
+
+`ns7-client/NS7Conf.reference.toml` is the full documented schema — every parameter, its default, and its allowed values — for the five plugins confirmed on 2026-08-03:
+
+1. Microsoft Windows OS Security Updates Management
+2. Microsoft Windows OS Quality Updates Management
+3. Microsoft 365 Apps (Office) for PC
+4. Microsoft Store Apps (WinGet)
+5. Microsoft Win32 Native Apps
+
+It is adapted from an Intune/Autopatch-style enterprise model. Fleet-level concepts from that model — Entra group targeting, Conditional Access compliance gates, tenant-wide reporting — deliberately do **not** appear in device configuration: they are meaningless on a standalone device and belong to the Admin Console where they exist at all. Ring membership survives as a single local value, `device.ring`, which a standalone user sets and an enrolled device receives from the server.
 
 ---
 

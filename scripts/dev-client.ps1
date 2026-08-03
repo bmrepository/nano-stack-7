@@ -79,7 +79,7 @@ function Invoke-Lab1 {
 }
 
 Write-Host "Syncing client source to lab1 ..." -ForegroundColor Cyan
-foreach ($dir in @("Cargo.toml", "shared-proto", "client", "server")) {
+foreach ($dir in @("Cargo.toml", "shared", "ns7-client", "ns7-server")) {
     scp -i $SshKey -r (Join-Path $RepoRoot $dir) "${Lab1User}@${Lab1Host}:$RemoteDir/" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "scp of $dir failed" }
 }
@@ -93,7 +93,7 @@ Invoke-Lab1 "if (-not (Test-Path $RemoteDir/target/debug/client.exe)) { throw 'c
 
 # The tray helper looks for its icons next to the executable; a plain cargo
 # build doesn't copy them (only the MSI does).
-Invoke-Lab1 "Copy-Item $RemoteDir/client/assets/ns7-icon-*.ico $RemoteDir/target/debug/ -Force"
+Invoke-Lab1 "Copy-Item $RemoteDir/ns7-client/assets/ns7-icon-*.ico $RemoteDir/target/debug/ -Force"
 
 if ($FreshEnrollment) {
     Write-Host "Clearing lab1's saved client state ..." -ForegroundColor Yellow

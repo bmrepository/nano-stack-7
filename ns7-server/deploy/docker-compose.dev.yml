@@ -13,5 +13,5 @@ services:
     image: nano-stack-7-server:dev
     pull_policy: build
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile.server
+      context: ../..
+      dockerfile: ns7-server/deploy/Dockerfile.server

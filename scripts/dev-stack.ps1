@@ -67,14 +67,14 @@ function Sync-Source {
     # the Windows/Linux boundary.
     $cmd = "set -e; rm -rf $WslWorkDir; mkdir -p $WslWorkDir; " +
            "cd `"`$(wslpath -a '$winPath')`"; " +
-           "cp -r Cargo.toml shared-proto server client admin-console deploy $WslWorkDir/; " +
-           "rm -rf $WslWorkDir/admin-console/node_modules $WslWorkDir/admin-console/dist"
+           "cp -r Cargo.toml shared ns7-server ns7-client $WslWorkDir/; " +
+           "rm -rf $WslWorkDir/ns7-server/admin-console/node_modules $WslWorkDir/ns7-server/admin-console/dist"
     Invoke-Wsl $cmd
 }
 
 function Invoke-Compose {
     param([string]$ComposeArgs, [switch]$AllowFailure)
-    Invoke-Wsl "cd $WslWorkDir/deploy && podman-compose -p $Project -f docker-compose.yml -f docker-compose.dev.yml $ComposeArgs" -AllowFailure:$AllowFailure
+    Invoke-Wsl "cd $WslWorkDir/ns7-server/deploy && podman-compose -p $Project -f docker-compose.yml -f docker-compose.dev.yml $ComposeArgs" -AllowFailure:$AllowFailure
 }
 
 <#

@@ -1,0 +1,538 @@
+# =============================================================================
+# Nano Stack 7 - reference configuration (NS7Conf.toml)
+# =============================================================================
+#
+# This file documents every supported setting, its default, and its allowed
+# values. A fresh install writes a working NS7Conf.toml with the defaults
+# below; this reference stays alongside it for lookup.
+#
+# NS7 is standalone-first. Everything here works with NO server: all plugins,
+# all policy, all remediation are evaluated on the device against this file.
+# Connecting to an NS7 Server Admin Console is OPTIONAL and only changes WHO
+# gets to edit parts of this file - never where the configuration lives.
+#
+# CONFIG AUTHORITY
+#   Standalone (StandaloneMode = true): this file is yours entirely.
+#   Enrolled  (StandaloneMode = false): the server owns exactly the sections
+#   listed in [managed].owned_sections and overwrites them on each check-in.
+#   Everything else remains local and is never touched.
+#
+# CONVENTIONS
+#   Durations are days unless the key says otherwise (_secs, _minutes).
+#   Times are 24-hour "HH:MM" local time.
+#   Every plugin supports `enabled` and `consent`; see [plugins] below.
+#
+# NOTE ON ENTERPRISE FLEET CONCEPTS
+#   This schema is adapted from an Intune/Autopatch-style model. Fleet-level
+#   ideas there (Entra group targeting, Conditional Access, tenant-wide ring
+#   membership) have no meaning on a single standalone device, so they are not
+#   reproduced. Ring membership survives as one local value - `device.ring` -
+#   which a standalone user sets themselves and an enrolled device receives
+#   from the server.
+# =============================================================================
+
+
+# Operating mode. `true` = fully standalone, no server contact of any kind.
+# `false` = enrolled; requires [server] and [workspace] to be filled in.
+# Chosen on first run in the app's Agent section, and changeable there later.
+StandaloneMode = true
+
+
+# -----------------------------------------------------------------------------
+# [agent] - the daemon itself
+# -----------------------------------------------------------------------------
+[agent]
+# How often plugins evaluate the device. Applies in standalone too, where it
+# is purely local scanning with no network involved.
+# Values: 300-86400. Default: 1800 (30 minutes).
+scan_interval_secs = 1800
+
+# Values: "error" | "warn" | "info" | "debug" | "trace". Default: "info".
+log_level = "info"
+
+# Show the tray icon in the notification area. Default: true.
+tray_icon = true
+
+# Check GitHub for newer agent releases. Values: "never" | "notify" | "auto".
+# "auto" downloads and installs without asking; "notify" only surfaces it in
+# the Updates page. Default: "notify".
+self_update = "notify"
+
+
+# -----------------------------------------------------------------------------
+# [device] - local identity and ring assignment
+# -----------------------------------------------------------------------------
+[device]
+# Deployment ring. Standalone: set it yourself. Enrolled: assigned by the
+# server. Rings stagger rollout - lower rings receive updates first and act as
+# canaries for the ones behind them.
+# Values: "pilot" | "early" | "production" | "excluded". Default: "production".
+#   pilot      - receives updates immediately (day 0)
+#   early      - typical +3 day delay
+#   production - typical +7 day delay
+#   excluded   - never auto-updates; findings are reported only
+ring = "production"
+
+# Extra delay on top of the ring's own delay, for one-off exceptions
+# (a demo machine, a workstation mid-project).
+# Values: 0-365. Default: 0.
+additional_delay_days = 0
+
+# Free-text label surfaced in the UI and, when enrolled, the Admin Console.
+# Default: "" (uses the hostname).
+label = ""
+
+
+# -----------------------------------------------------------------------------
+# [active_hours] - when the device must not be disrupted
+# -----------------------------------------------------------------------------
+# Applies to every plugin: no restart, and no interactive install, inside
+# these hours.
+[active_hours]
+# Values: "manual" | "automatic". "automatic" learns from usage patterns.
+# Default: "manual".
+mode = "manual"
+
+# Used when mode = "manual". Default: "06:00" to "22:00".
+# Windows caps the active-hours window at 18 hours.
+start = "06:00"
+end = "22:00"
+
+
+# -----------------------------------------------------------------------------
+# [notifications] - what the user sees
+# -----------------------------------------------------------------------------
+[notifications]
+# Values: "all" | "failures_only" | "none". Default: "all".
+level = "all"
+
+# Toast when an update is available. Default: true.
+show_available = true
+
+# Warn before a restart. Default: true.
+show_restart_warning = true
+
+# Reminder cadence before a deadline. Values: 15 | 30 | 60. Default: 60.
+reminder_interval_minutes = 60
+
+# Days before a deadline at which to start warning. Default: 7.
+deadline_warning_days = 7
+
+
+# -----------------------------------------------------------------------------
+# [restart] - shared restart policy
+# -----------------------------------------------------------------------------
+# Individual plugins may override these.
+[restart]
+# Values: "automatic" | "user_controlled". Default: "user_controlled".
+behavior = "user_controlled"
+
+# Only restart outside [active_hours]. Default: true.
+outside_active_hours_only = true
+
+# Preferred restart slot when a restart is pending.
+# Values: "any" | "monday" ... "sunday". Default: "sunday".
+scheduled_day = "sunday"
+# Values: "00:00"-"23:59". Default: "02:00".
+scheduled_time = "02:00"
+
+# Warning countdown before a forced restart.
+# Values: 5-1440. Default: 60.
+countdown_minutes = 60
+
+# How many times the user may postpone. Values: 0-5. Default: 3.
+max_postponements = 3
+
+
+# -----------------------------------------------------------------------------
+# [delivery_optimization] - bandwidth control
+# -----------------------------------------------------------------------------
+[delivery_optimization]
+# Values: "http_only" | "lan_peering" | "internet_peering" | "lan_and_internet".
+# Default: "lan_peering".
+download_mode = "lan_peering"
+
+# Peer cache size in GB. Values: 1-100. Default: 20.
+cache_size_gb = 20
+
+# Cap on download bandwidth, as a percentage of what's available.
+# Values: 10-100. Default: 50.
+max_bandwidth_percent = 50
+
+
+# -----------------------------------------------------------------------------
+# [managed] - written by the server; do not hand-edit
+# -----------------------------------------------------------------------------
+# Only meaningful when StandaloneMode = false. The server overwrites exactly
+# the sections named in `owned_sections` on every check-in; everything outside
+# that list stays local, so enrolling a device never silently discards its
+# existing configuration.
+[managed]
+# Set to true once enrolled and the server has pushed configuration at least
+# once. Default: false.
+active = false
+
+# Populated from the last successful check-in. Informational only.
+last_sync_unix = 0
+server_version = ""
+workspace_name = ""
+
+# TOML paths the server currently owns, e.g.
+#   ["plugins.windows_security_updates", "restart", "active_hours"]
+# Empty means the server pushes nothing and every setting stays local.
+# Default: [].
+owned_sections = []
+
+
+# -----------------------------------------------------------------------------
+# [server] / [workspace] - only used when StandaloneMode = false
+# -----------------------------------------------------------------------------
+[server]
+# Hostname or IP of the NS7 Server Admin Console. Default: "".
+host = ""
+# Default: 7777 (Noise_XX enrollment) and 7778 (Noise_IK check-in).
+enrollment_port = 7777
+checkin_port = 7778
+
+[workspace]
+# The workspace's UUID doubles as the enrollment credential; copy it from the
+# Admin Console's Workspaces page. Default: "".
+id = ""
+
+
+# =============================================================================
+# PLUGINS
+# =============================================================================
+# Every plugin shares two keys:
+#
+#   enabled  true | false
+#            Default varies per plugin; see each section.
+#
+#   consent  "auto"        act without asking (only for low blast radius)
+#            "ask"         prompt the user, act only on approval
+#            "notify_only" report the finding, never act
+#            "disabled"    do not even evaluate
+#            Default: "ask". Section 1 of the README - the human stays in the
+#            loop - is why "ask" is the default rather than "auto".
+#
+# Consent behaves identically standalone and enrolled. The only difference is
+# whether the value came from this file or was pushed by the server.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. Microsoft Windows OS Security Updates Management
+# -----------------------------------------------------------------------------
+# Security-classified OS updates. Kept separate from quality updates because
+# they warrant a much shorter deadline.
+[plugins.windows_security_updates]
+enabled = true
+consent = "ask"
+
+# Wait this long after Microsoft publishes before offering the update.
+# Values: 0-30. Default: 0 - security updates should not be deferred.
+deferral_days = 0
+
+# Install becomes mandatory this many days after the update is offered.
+# Values: 0-30. Default: 7. Typical enterprise: 3-7 for critical.
+deadline_days = 7
+
+# Extra time after the deadline before enforcement, so a user who has been
+# offline is not restarted the instant they reconnect.
+# Values: 0-7. Default: 2.
+grace_period_days = 2
+
+# Restart automatically once deadline + grace has elapsed. Default: true.
+auto_reboot_after_deadline = true
+
+# Which severities this plugin acts on. Anything excluded is still reported.
+# Values: any of "critical", "important", "moderate", "low".
+# Default: ["critical", "important"].
+severity_filter = ["critical", "important"]
+
+# Include updates for other Microsoft products (not just the OS).
+# Default: true.
+include_microsoft_products = true
+
+# Values: "windows_update" | "wsus". Default: "windows_update".
+# "wsus" additionally requires wsus_server below.
+update_source = "windows_update"
+# Example: "http://wsus.corp.example.com:8530". Default: "".
+wsus_server = ""
+
+# Emergency stop. While true, nothing is offered or installed.
+# Default: false.
+paused = false
+# Optional auto-resume date, "YYYY-MM-DD". Default: "" (paused until cleared).
+paused_until = ""
+
+
+# -----------------------------------------------------------------------------
+# 2. Microsoft Windows OS Quality Updates Management
+# -----------------------------------------------------------------------------
+# Monthly cumulative (non-security) updates. Longer deferrals are normal here,
+# since these carry more regression risk and less urgency.
+[plugins.windows_quality_updates]
+enabled = true
+consent = "ask"
+
+# Values: 0-30. Default: 7.
+deferral_days = 7
+
+# Values: 0-30. Default: 14. Typical enterprise: 7-14.
+deadline_days = 14
+
+# Values: 0-7. Default: 2.
+grace_period_days = 2
+
+# Default: true.
+auto_reboot_after_deadline = true
+
+# Install without individual approval once the deferral has elapsed.
+# Default: true. Set false to require an explicit approval per update.
+automatic_approval = true
+
+# Include hardware driver updates delivered through Windows Update.
+# Default: false - drivers are the most common source of regressions, so they
+# are opt-in and, when enabled, default to notify-only.
+include_drivers = false
+# Values: "auto" | "ask" | "notify_only". Default: "notify_only".
+driver_consent = "notify_only"
+# Driver classes never installed automatically, regardless of the above.
+# Values: any of "gpu", "bios", "firmware", "storage", "network", "audio".
+# Default: ["gpu", "bios", "firmware", "storage"].
+driver_manual_approval_classes = ["gpu", "bios", "firmware", "storage"]
+
+# Values: "windows_update" | "wsus". Default: "windows_update".
+update_source = "windows_update"
+
+# Default: false.
+paused = false
+paused_until = ""
+
+
+# -----------------------------------------------------------------------------
+# 3. Microsoft 365 Apps (Office) for PC
+# -----------------------------------------------------------------------------
+# Click-to-Run updates for the Microsoft 365 desktop apps.
+[plugins.microsoft_365_apps]
+enabled = true
+consent = "ask"
+
+# Release channel. Slower channels trade features for stability.
+# Values:
+#   "current"                  newest features, fastest cadence
+#   "monthly_enterprise"       monthly, predictable - recommended default
+#   "semi_annual"              twice yearly, most stable
+#   "semi_annual_preview"      semi-annual, one cycle early
+#   "current_preview"          current channel, pre-release
+#   "beta"                     unsupported, test devices only
+# Default: "monthly_enterprise".
+update_channel = "monthly_enterprise"
+
+# Pin to a specific build, e.g. "16.0.17328.20162". Empty = always latest for
+# the channel. Default: "".
+target_version = ""
+
+# Values: 0-30. Default: 7.
+deadline_days = 7
+
+# Keep the previous build available so a bad release can be rolled back.
+# Default: true.
+rollback_enabled = true
+
+# Suppress Office's own update prompts, so NS7 is the single voice.
+# Default: true.
+hide_update_notifications = true
+
+# Close Office apps automatically to apply an update once past the deadline.
+# Default: false - closing apps under someone mid-document is disruptive.
+force_app_shutdown = false
+
+# Default: false.
+paused = false
+paused_until = ""
+
+
+# -----------------------------------------------------------------------------
+# 4. Microsoft Store Apps (WinGet)
+# -----------------------------------------------------------------------------
+# Public applications from the Store / WinGet catalog: browsers, readers,
+# utilities. These typically update safely and are the best candidate for
+# "auto" consent.
+[plugins.store_apps]
+enabled = true
+# Low blast radius, so unattended updates are reasonable here.
+# Default: "auto".
+consent = "auto"
+
+# Where packages come from.
+# Values: "msstore" | "winget" | "both". Default: "both".
+update_source = "both"
+
+# Values: "system" | "user". Default: "system" - keeps apps consistent for
+# every account on the device.
+installation_context = "system"
+
+# May the signed-in user update or remove managed apps themselves?
+# Values: "allowed" | "blocked". Default: "allowed" in standalone, typically
+# "blocked" when enrolled.
+user_update_control = "allowed"
+
+# Update everything found, or only `include` below.
+# Default: true.
+update_all = true
+
+# Package IDs to manage when update_all = false.
+# Example: ["Google.Chrome", "7zip.7zip", "Notepad++.Notepad++"]
+# Default: [].
+include = []
+
+# Never touched, even when update_all = true.
+# Example: ["Valve.Steam", "Mozilla.Firefox"]
+# Default: [].
+exclude = []
+
+# Hold specific packages at a version, e.g.
+#   [{ id = "Google.Chrome", version = "131.0.6778.86" }]
+# Default: [].
+pinned = []
+
+# Delay after a new version appears before this device takes it. Stacks with
+# device.ring. Values: 0-90. Default: 0.
+delay_days = 0
+
+# Per-application overrides. Anything omitted falls back to the values above.
+# [[plugins.store_apps.applications]]
+# id       = "Google.Chrome"
+# consent  = "auto"
+# delay_days = 3
+# deadline_days = 7
+
+
+# -----------------------------------------------------------------------------
+# 5. Microsoft Win32 Native Apps
+# -----------------------------------------------------------------------------
+# Line-of-business and packaged desktop applications: VPN clients, security
+# agents, ERP, in-house software. The most control and the most configuration,
+# because NS7 cannot infer install/detect semantics the way it can for WinGet.
+[plugins.win32_apps]
+enabled = false
+consent = "ask"
+
+# ---- Defaults applied to every application below unless it overrides them --
+
+# Values: "system" | "user". Default: "system".
+installation_context = "system"
+
+# Values: "x86" | "x64" | "arm64". Default: "x64".
+architecture = "x64"
+
+# Values: "app_defined" | "force" | "suppress". Default: "suppress" -
+# an application installer should not decide to reboot the machine.
+restart_behavior = "suppress"
+
+# Abandon an install that runs longer than this.
+# Values: 5-60. Default: 60.
+install_timeout_minutes = 60
+
+# Exit codes treated as success. 3010 and 1641 mean "succeeded, reboot
+# needed" and must not be read as failures.
+# Default: [0, 3010, 1641].
+success_return_codes = [0, 3010, 1641]
+# Exit codes worth retrying rather than failing outright. Default: [1618].
+# (1618 = another install is already in progress.)
+retry_return_codes = [1618]
+# Values: 0-5. Default: 2.
+max_retries = 2
+
+# Values: "show_all" | "failures_only" | "hide_all". Default: "failures_only".
+user_notifications = "failures_only"
+
+# Values: 0-30. Default: 7. Security tooling typically uses 1-2.
+deadline_days = 7
+
+# What to do when a required app is found missing, wrong-versioned or broken.
+# Values: any of "reinstall", "upgrade", "repair", "restore", "retry".
+# Default: ["upgrade", "repair", "retry"] - deliberately excludes "reinstall"
+# and "restore", which can destroy local state.
+remediation_actions = ["upgrade", "repair", "retry"]
+
+# ---- Per-application definitions -------------------------------------------
+# One [[plugins.win32_apps.applications]] block per managed application.
+# Nothing is managed until at least one is defined - hence enabled = false
+# above.
+#
+# [[plugins.win32_apps.applications]]
+# name              = "Contoso VPN Client"
+# version           = "5.2.1"
+# # Values: "required" | "available" | "uninstall".
+# #   required  - install and keep installed
+# #   available - offer it, install only on request
+# #   uninstall - remove it if present
+# assignment        = "required"
+# install_command   = "setup.exe /silent /norestart"
+# uninstall_command = "MsiExec.exe /X{GUID} /quiet"
+# repair_command    = ""                      # optional
+# source            = "https://files.example.com/vpn-5.2.1.zip"
+# sha256            = "..."                   # verified before executing
+#
+# # How NS7 decides the app is already present and current. Checked in order;
+# # the first that matches wins. MSI and registry are the most reliable.
+# # Types: "msi_product_code" | "registry" | "file_version" | "script".
+# [[plugins.win32_apps.applications.detection]]
+# type            = "msi_product_code"
+# product_code    = "{12345678-1234-1234-1234-1234567890AB}"
+#
+# [[plugins.win32_apps.applications.detection]]
+# type            = "registry"
+# path            = 'HKLM\Software\Contoso\VPN'
+# value           = "Version"
+# # Values: "equals" | "greater_or_equal" | "exists" | "version_greater_or_equal".
+# operator        = "version_greater_or_equal"
+# expected        = "5.2.1"
+#
+# [[plugins.win32_apps.applications.detection]]
+# type            = "file_version"
+# path            = 'C:\Program Files\Contoso\VPN\vpn.exe'
+# operator        = "version_greater_or_equal"
+# expected        = "5.2.1"
+#
+# # Must be satisfied or the app is skipped (and reported as not applicable).
+# [plugins.win32_apps.applications.requirements]
+# min_os_version  = "10.0.22000"     # Windows 11 21H2
+# architecture    = ["x64"]
+# min_ram_gb      = 8
+# min_disk_gb     = 2
+#
+# # Installed first, in the order listed.
+# [[plugins.win32_apps.applications.dependencies]]
+# name            = ".NET Desktop Runtime 8"
+# winget_id       = "Microsoft.DotNet.DesktopRuntime.8"
+# auto_install    = true
+#
+# # Replaces an older application.
+# [plugins.win32_apps.applications.supersedes]
+# name                       = "Contoso VPN Client 4.x"
+# uninstall_previous         = true
+
+
+# =============================================================================
+# PLANNED PLUGINS (schema not final; not yet evaluated by the agent)
+# =============================================================================
+# The source model also covers two areas NS7 does not implement yet. They are
+# noted here so the intent is not lost, and will get their own sections:
+#
+#   windows_feature_updates - OS version upgrades (e.g. Windows 11 24H2 -> 25H2)
+#     target_version, deferral_days (0-365, typically 60-90),
+#     rollback_period_days (2-60), compatibility_hold, manual_approval
+#
+#   windows_driver_updates - standalone driver management, beyond the
+#     include_drivers switch under windows_quality_updates
+#     approval_mode ("all" | "recommended_only" | "manual"),
+#     excluded_models, per-class approval
+#
+# Fleet-wide concerns from the source model - Entra group targeting,
+# Conditional Access compliance gates, tenant reporting - are Admin Console
+# features rather than device configuration, and so do not belong in this file.
+# =============================================================================
