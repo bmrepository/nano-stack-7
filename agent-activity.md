@@ -4,6 +4,30 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-03
 
+### Full local (DEV) end-to-end test — passed
+
+First real exercise of the complete dev environment after the dev/prod split, on current `main` (`1d290d2`, clean tree).
+
+- Rebuilt the dev stack from source (`.\scripts\dev-stack.ps1 rebuild`) so the test ran against exactly what's on disk, then confirmed it healthy with a fresh database (`/healthz` → `ok`, `admin_exists:false`).
+- Pre-staged the client on lab1 (`.\scripts\dev-client.ps1 -NoRun -FreshEnrollment`) — synced, built, tray icons copied next to the binary, saved state cleared.
+- **Did not create the admin account myself**: it's a single-admin system, so choosing the password would have saddled the user with a credential they didn't pick. Handed that one step to them; they created the account and a workspace (`local-workspace1`, id `052efc81-…`) in the console.
+- Ran `.\scripts\dev-client.ps1 -WorkspaceId 052efc81-… -CheckinIntervalSecs 15`. Everything worked first try, over the real network (lab1 → the dev PC's Tailscale IP `100.98.74.19`):
+  - `Noise_XX handshake complete` → `enrollment successful device_id=0858fe31-…`
+  - State persisted to `C:\Users\sysadmin\AppData\Local\NanoStack7\` — confirming the new per-user path, not the old CWD-relative one
+  - `check-in successful installed_app_count=90 finding_count=1`
+  - Finding fired correctly: `App Installer is outdated (installed 1.29.279.0, recommended 1.29.280.0)`
+  - Server side logged the matching `device enrolled` / `check-in received` / `finding detected` events
+- Verified persistence by querying Postgres directly rather than through the API — my browser session has no admin token and logging in as the user isn't appropriate:
+  ```sql
+  SELECT w.name AS workspace, d.hostname, d.os_version, d.device_id,
+         to_timestamp(d.last_checkin_unix), d.last_findings
+  FROM devices d JOIN workspaces w ON w.id = d.workspace_id;
+  ```
+  Returned the lab1 row joined to `local-workspace1` with the finding stored as JSON.
+- **User confirmed the two things I can't verify remotely** (Windows session isolation blocks SSH-launched UI): the tray icon renders the "N7" glyph and correctly picks the light/dark variant, and launching `client.exe` with no env vars set prompts for Server Address and Workspace ID via the setup dialog. Updated the README note from "needs a human at the console" to confirmed-working, and made explicit that future UI changes must be verified from the machine's own console.
+
+This run exercised everything that was previously broken or unverified in one pass: cross-machine networking via WSL2 mirrored mode, the `%LOCALAPPDATA%` state path, Postgres persistence, both dev scripts, and the client UI.
+
 ### Verified prod release chain + fixed Podman Desktop
 
 - **Confirmed the client MSI pipeline finally works end to end.** `Release client installer` succeeded on tags `v0.1.2` and `v0.1.3`; the release asset is published (`nano-stack-7-client-installer.msi`, 962,560 bytes) and the stable URL the Admin Console links to (`/releases/latest/download/nano-stack-7-client-installer.msi`) returns HTTP 200. This closes out the original "no installer at that URL" report.
