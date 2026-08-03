@@ -20,7 +20,7 @@ jobs:
   build-installer:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Chocolatey is preinstalled on windows-latest and doesn't depend on
       # any GitHub API call — arduino/setup-protoc@v3 failed here on the
@@ -52,8 +52,22 @@ jobs:
       - name: Build MSI installer
         run: cargo wix -p client --nocapture --output nano-stack-7-client-installer.msi
 
+      # Always available, including for workflow_dispatch runs — lets you
+      # grab and test an installer without cutting a release.
+      - name: Upload MSI as build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nano-stack-7-client-installer
+          path: nano-stack-7-client-installer.msi
+
+      # A GitHub Release must attach to a tag, so this is skipped on
+      # workflow_dispatch runs (which build from a branch). Push a v* tag to
+      # publish the installer at the stable
+      # /releases/latest/download/nano-stack-7-client-installer.msi URL that
+      # the Admin Console links to.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
         with:
           files: nano-stack-7-client-installer.msi
         env:

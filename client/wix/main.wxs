@@ -10,12 +10,12 @@
   consent-helper.exe/tray-helper.exe/ns7-icon-*.ico to sit alongside it.
 
   **Every `Source`/`SourceFile` path here must use `$(var.CargoTargetBinDir)`.**
-  Learned across three failed CI runs: `light.exe` does NOT resolve these
-  paths relative to this .wxs file's own location — it uses its own working
-  directory, which is neither `client/` nor `client/wix/`. Both
-  `..\assets\ns7-icon-light.ico` and a bare `ns7-icon-light.ico` failed with
-  `LGHT0103: The system cannot find the file`, while `$(var.CargoTargetBinDir)`
-  worked for the binaries on the very first try.
+  Verified working as of 2026-08-02, after three failed CI runs proved that
+  `light.exe` does NOT resolve these paths relative to this .wxs file's own
+  location — it uses its own working directory, which is neither `client/`
+  nor `client/wix/`. Both `..\assets\ns7-icon-light.ico` and a bare
+  `ns7-icon-light.ico` failed with `LGHT0103: The system cannot find the
+  file`, while `$(var.CargoTargetBinDir)` worked for the binaries first try.
 
   Consequence for the icons: they're staged into the Cargo target bin dir by
   a workflow step (`.github/workflows/release-client.yml`) before `cargo wix`

@@ -4,6 +4,28 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Release workflow: WiX build now succeeds; fixed release-vs-dispatch trigger mismatch
+
+- User shared the next job log (`C:\Temp\job-logs.txt`). **The WiX packaging problem is solved** — `candle` and `light` both ran clean with zero errors and the MSI was produced:
+  ```
+  Finished `release` profile [optimized] target(s) in 48.00s
+  Windows Installer XML Toolset Compiler version 3.14.1.8722
+  main.wxs
+  Windows Installer XML Toolset Linker version 3.14.1.8722
+  ```
+  Confirms staging the icons into the Cargo target bin dir + referencing everything via `$(var.CargoTargetBinDir)` was the right fix.
+- Remaining failure was unrelated to WiX — the publish step:
+  ```
+  ##[error]⚠️ GitHub Releases requires a tag
+  ```
+  `softprops/action-gh-release` can only attach assets to a tag, but the run was triggered by **Run workflow** (`workflow_dispatch`) against the `main` *branch*.
+- Fixed in `.github/workflows/release-client.yml`:
+  - Added an `actions/upload-artifact@v4` step that always runs, so `workflow_dispatch` runs still produce a downloadable MSI (useful for testing an installer without cutting a release).
+  - Gated the `Publish GitHub Release` step behind `if: startsWith(github.ref, 'refs/tags/')` so it's cleanly skipped on branch runs instead of failing the job.
+- Updated `client/wix/main.wxs`'s header to mark the path convention as verified-working rather than provisional.
+- Also cleared the run's Node 20 deprecation warnings (`actions/checkout@v4`, `softprops/action-gh-release@v2` were being force-run on Node 24). Checked the actual current versions via the API rather than guessing tags — `curl -s "https://api.github.com/repos/<owner>/<repo>/releases/latest"` returned `v7.0.1` for both `actions/checkout` and `actions/upload-artifact`, and `v3.0.2` for `softprops/action-gh-release` — then pinned to `@v7`, `@v7`, and `@v3` respectively.
+- Note for the user: the existing `v0.1.0` tag points at the old broken commit, so publishing to the stable `/releases/latest/download/` URL needs a *new* tag on current `main`.
+
 ### Release workflow: fourth fix — stage icons into the Cargo target bin dir
 
 - Third attempt (bare filenames) also failed; user pasted the error directly:
