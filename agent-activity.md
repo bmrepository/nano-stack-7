@@ -4,6 +4,15 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Release workflow: second failure diagnosed (WiX relative paths) + `dunow.ps1` helper added
+
+- Created `dunow.ps1` (repo root) — a reusable PowerShell script wrapping the standard `git add -A` → commit → push `dev` → merge into `main` → push `main` → checkout `dev` sequence, with a branch guard (must be on `dev`), a clean-tree no-op path, and a clear stop-and-report on merge conflict rather than doing anything destructive.
+- User re-ran the release workflow via **Run workflow** (`workflow_dispatch`) on `main` after pushing the `choco install protoc` fix. Confirmed via the public API that this was a genuinely new run (`id 30775313097`, `event: workflow_dispatch`, distinct from the original `30774777771`) — first attempt to "run it again" hadn't actually registered as any new activity (`run_attempt` and timestamps unchanged), traced to the user needing to use the **Run workflow** dropdown specifically rather than **Re-run all jobs** on the old failed run (which would've reused that run's original `v0.1.0` checkout, still containing the broken step).
+- New run got further: `Install protoc` (choco), `dtolnay/rust-toolchain`, and `Install cargo-wix` all succeeded. Failed at **Build MSI installer** (`cargo wix -p client --nocapture --output ...`) — progress confirms the protoc fix worked; this is a new, different failure in the WiX packaging step itself.
+- Still could not fetch raw log text (`GET .../jobs/{id}/logs` → `403`, needs repo-write auth). Diagnosed by re-reasoning through `cargo-wix`'s actual conventions rather than guessing blindly again: `candle`/`light` run from `client/wix/`, not `client/` — so this file's `..\target\release\*.exe` paths resolved to a nonexistent `client/target/release/...` (the real workspace build output lives at the repo root's `target/release/`), and `assets\*.ico` was missing one more `..\` level.
+- Fixed `client/wix/main.wxs`: binaries now reference cargo-wix's own `$(var.CargoTargetBinDir)` variable (resolves correctly regardless of workspace nesting, sidestepping the relative-path guesswork entirely); icon paths corrected to `..\assets\ns7-icon-{light,dark}.ico`; updated the file's own header comment to document the actual cause instead of the earlier speculative one.
+- Not yet re-verified. If this attempt also fails, next step is asking the user to copy the actual error text from the GitHub UI directly (they have log access; polling the API by elimination has real limits without raw log text).
+
 ### Release workflow first-run failure diagnosed and fixed
 
 - User pushed `dev`, merged/pushed `main`, updated the Portainer stack, and pushed tag `v0.1.0` to trigger `.github/workflows/release-client.yml`. No installer appeared at the expected release URL.

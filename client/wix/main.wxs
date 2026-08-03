@@ -2,14 +2,18 @@
 <!--
   Nano Stack 7 client installer (WiX Toolset v3 / cargo-wix).
 
-  UNVERIFIED: authored without access to a working WiX build environment
-  this session (lab1, the only box with cargo-wix installed, was
-  intermittently offline). Built and published via
-  .github/workflows/release-client.yml on GitHub's windows-latest runner,
-  which ships WiX v3 preinstalled. If `cargo wix` fails there, the most
-  likely culprits are the relative Source paths below (assumed relative to
-  the `client/` package directory, since `client` is a workspace member and
-  its build output lands in the *workspace* target dir, not its own).
+  Built and published via .github/workflows/release-client.yml on GitHub's
+  windows-latest runner, which ships WiX v3 preinstalled.
+
+  First real run failed inside `cargo wix` itself: this file originally used
+  paths like `..\target\release\client.exe`, assuming candle/light run from
+  the `client/` package directory. They actually run from `client/wix/`, one
+  level deeper, so those paths resolved to a nonexistent `client/target/...`
+  instead of the real workspace-root `target/`. Binaries now use cargo-wix's
+  own `$(var.CargoTargetBinDir)` variable, which it resolves correctly
+  regardless of workspace nesting; the icon assets use `..\assets\...` to
+  account for the same one-level difference. Still unverified against an
+  actual run as of this fix.
 
   Packages all three binaries (the daemon plus its two helper processes)
   and the tray icon assets into one installer, since the daemon expects
@@ -46,19 +50,19 @@
             <Directory Id='ProgramFiles64Folder' Name='PFiles'>
                 <Directory Id='APPLICATIONFOLDER' Name='Nano Stack 7'>
                     <Component Id='ClientExe' Guid='*' Win64='yes'>
-                        <File Id='ClientExe' Name='client.exe' DiskId='1' Source='..\target\release\client.exe' KeyPath='yes'/>
+                        <File Id='ClientExe' Name='client.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\client.exe' KeyPath='yes'/>
                     </Component>
                     <Component Id='ConsentHelperExe' Guid='*' Win64='yes'>
-                        <File Id='ConsentHelperExe' Name='consent-helper.exe' DiskId='1' Source='..\target\release\consent-helper.exe' KeyPath='yes'/>
+                        <File Id='ConsentHelperExe' Name='consent-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\consent-helper.exe' KeyPath='yes'/>
                     </Component>
                     <Component Id='TrayHelperExe' Guid='*' Win64='yes'>
-                        <File Id='TrayHelperExe' Name='tray-helper.exe' DiskId='1' Source='..\target\release\tray-helper.exe' KeyPath='yes'/>
+                        <File Id='TrayHelperExe' Name='tray-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\tray-helper.exe' KeyPath='yes'/>
                     </Component>
                     <Component Id='IconLight' Guid='*' Win64='yes'>
-                        <File Id='IconLightFile' Name='ns7-icon-light.ico' DiskId='1' Source='assets\ns7-icon-light.ico' KeyPath='yes'/>
+                        <File Id='IconLightFile' Name='ns7-icon-light.ico' DiskId='1' Source='..\assets\ns7-icon-light.ico' KeyPath='yes'/>
                     </Component>
                     <Component Id='IconDark' Guid='*' Win64='yes'>
-                        <File Id='IconDarkFile' Name='ns7-icon-dark.ico' DiskId='1' Source='assets\ns7-icon-dark.ico' KeyPath='yes'/>
+                        <File Id='IconDarkFile' Name='ns7-icon-dark.ico' DiskId='1' Source='..\assets\ns7-icon-dark.ico' KeyPath='yes'/>
                     </Component>
                 </Directory>
             </Directory>
@@ -81,7 +85,7 @@
         </Feature>
 
         <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
-        <Icon Id='ProductICO' SourceFile='assets\ns7-icon-light.ico'/>
+        <Icon Id='ProductICO' SourceFile='..\assets\ns7-icon-light.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
     </Product>
 </Wix>
