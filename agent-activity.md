@@ -4,6 +4,18 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Release workflow: fixed GITHUB_TOKEN permissions (403 on release creation)
+
+- Tag `v0.1.1` push triggered the workflow correctly and the MSI built fine; failure was purely at the publish step:
+  ```
+  👩‍🏭 Creating new GitHub release for tag v0.1.1...
+  ⚠️ GitHub release failed with status: 403
+  Resource not accessible by integration
+  Skip retry — your GitHub token/PAT does not have the required permission to create a release
+  ```
+- Cause: GitHub defaults `GITHUB_TOKEN` to read-only for repos created under the current default setting, so `softprops/action-gh-release` can't create a release.
+- Fixed by adding a job-level `permissions: contents: write` block to `.github/workflows/release-client.yml`. Chose this over flipping the repo-wide Settings → Actions → General → Workflow permissions toggle, since it keeps the elevated scope to this one workflow (and lives in version control rather than as invisible repo state).
+
 ### Release workflow: WiX build now succeeds; fixed release-vs-dispatch trigger mismatch
 
 - User shared the next job log (`C:\Temp\job-logs.txt`). **The WiX packaging problem is solved** — `candle` and `light` both ran clean with zero errors and the MSI was produced:

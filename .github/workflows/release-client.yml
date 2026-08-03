@@ -19,6 +19,13 @@ on:
 jobs:
   build-installer:
     runs-on: windows-latest
+    # GITHUB_TOKEN defaults to read-only on this repo, which made the
+    # release step fail with "403 Resource not accessible by integration".
+    # Requesting contents:write here (rather than flipping the repo-wide
+    # Settings → Actions → Workflow permissions toggle) keeps the elevated
+    # scope narrowed to just this workflow.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
 
