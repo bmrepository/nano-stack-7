@@ -65,6 +65,9 @@
                     <Component Id='SetupHelperExe' Guid='*' Win64='yes'>
                         <File Id='SetupHelperExe' Name='setup-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\setup-helper.exe' KeyPath='yes'/>
                     </Component>
+                    <Component Id='StatusHelperExe' Guid='*' Win64='yes'>
+                        <File Id='StatusHelperExe' Name='status-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\status-helper.exe' KeyPath='yes'/>
+                    </Component>
                     <Component Id='IconLight' Guid='*' Win64='yes'>
                         <File Id='IconLightFile' Name='ns7-icon-light.ico' DiskId='1' Source='$(var.CargoTargetBinDir)\ns7-icon-light.ico' KeyPath='yes'/>
                     </Component>
@@ -124,6 +127,7 @@
             <ComponentRef Id='ConsentHelperExe'/>
             <ComponentRef Id='TrayHelperExe'/>
             <ComponentRef Id='SetupHelperExe'/>
+            <ComponentRef Id='StatusHelperExe'/>
             <ComponentRef Id='IconLight'/>
             <ComponentRef Id='IconDark'/>
             <ComponentRef Id='StartMenuShortcut'/>

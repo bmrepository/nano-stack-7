@@ -1,5 +1,5 @@
 use crate::registry::Registry;
-use crate::workspace::ServerIdentity;
+use crate::workspace::{ServerIdentity, WorkspaceStore};
 use shared_proto::{cert, noise, CheckInResponse, DeviceInventory};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -8,23 +8,34 @@ use tokio::net::{TcpListener, TcpStream};
 /// Runs the ongoing device check-in channel — separate from both the Axum
 /// admin API and the Noise_XX enrollment channel, since it speaks a
 /// different Noise pattern (IK, not XX).
-pub async fn run(identity: Arc<ServerIdentity>, registry: Arc<Registry>, addr: &str) -> anyhow::Result<()> {
+pub async fn run(
+    identity: Arc<ServerIdentity>,
+    workspaces: Arc<WorkspaceStore>,
+    registry: Arc<Registry>,
+    addr: &str,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     tracing::info!("check-in channel listening on {}", listener.local_addr()?);
 
     loop {
         let (stream, peer) = listener.accept().await?;
         let identity = identity.clone();
+        let workspaces = workspaces.clone();
         let registry = registry.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_checkin(stream, &identity, &registry).await {
+            if let Err(e) = handle_checkin(stream, &identity, &workspaces, &registry).await {
                 tracing::warn!(%peer, error = %e, "check-in connection failed");
             }
         });
     }
 }
 
-async fn handle_checkin(mut stream: TcpStream, identity: &ServerIdentity, registry: &Registry) -> anyhow::Result<()> {
+async fn handle_checkin(
+    mut stream: TcpStream,
+    identity: &ServerIdentity,
+    workspaces: &WorkspaceStore,
+    registry: &Registry,
+) -> anyhow::Result<()> {
     let (mut transport, device_public_key) = noise::handshake_ik_responder(&mut stream, &identity.private_key).await?;
 
     // Noise_IK proves the initiator controls this key, but that alone isn't
@@ -75,6 +86,15 @@ async fn handle_checkin(mut stream: TcpStream, identity: &ServerIdentity, regist
         )
         .await?;
 
+    // Workspace name is best-effort: a check-in whose workspace was deleted
+    // mid-session shouldn't fail outright, since the cert lookup above already
+    // established the device is legitimate.
+    let workspace_name = workspaces
+        .find_by_id(&existing_cert.workspace_id)
+        .await?
+        .map(|w| w.name)
+        .unwrap_or_default();
+
     noise::send_message(
         &mut stream,
         &mut transport,
@@ -82,6 +102,10 @@ async fn handle_checkin(mut stream: TcpStream, identity: &ServerIdentity, regist
             accepted: true,
             server_time_unix,
             findings,
+            server_version: env!("CARGO_PKG_VERSION").to_string(),
+            workspace_name,
+            checkin_interval_secs: crate::plugins::DEFAULT_CHECKIN_INTERVAL_SECS,
+            plugins: crate::plugins::enabled_for_workspace(&existing_cert.workspace_id),
         },
     )
     .await?;

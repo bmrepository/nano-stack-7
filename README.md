@@ -151,7 +151,22 @@ Two distinct secure channels exist in this system — this is an important clari
 - Consent decisions and their outcomes are logged and reported back to the server as an audit trail.
 - **PoC implementation**: `client/src/bin/consent-helper.rs` — a separate process, launched per-finding with a timeout, showing a native Yes/No dialog via PowerShell's `System.Windows.Forms.MessageBox` (chosen over a Rust GUI crate to avoid guessing `windows`-crate feature flags for one dialog call). `client/src/bin/tray-helper.rs` — a second, longer-lived separate process spawned once at daemon startup, showing an "Agent - Running" icon in the notification area via PowerShell's `System.Windows.Forms.NotifyIcon` with an Exit menu item (same rationale: a tray icon needs a running Win32 message loop, and this way that loop lives in PowerShell/WinForms, not mixed into the daemon's tokio runtime). Known limitation: the tray helper isn't tied to the daemon's lifetime — if the daemon exits, the icon keeps running until dismissed via its own Exit item.
 - **Custom tray icon (2026-08-02)**: `client/assets/ns7-icon-light.ico` / `ns7-icon-dark.ico` — simple "N7" glyph icons (matching the Admin Console's sidebar brand mark), generated programmatically via `System.Drawing` (dark glyph for light taskbars, light glyph for dark taskbars). `tray-helper.rs` picks between them at runtime by reading `HKCU:\...\Personalize\SystemUsesLightTheme`, falling back to the default system icon if the files aren't found next to the exe.
-- **Confirmed working (2026-08-03)**: launched from a machine's own interactive desktop session, the tray icon renders the "N7" glyph correctly and picks the right light/dark variant for the taskbar theme; with no env vars set, the client prompts for server address and workspace ID via the setup dialog. Running it over SSH does **not** show any of this — Windows session isolation puts an SSH-launched process's UI in a different, non-visible session. That affects `setup-helper` and `consent-helper` too, so **any UI change here has to be verified from the machine's own console**, not remotely.
+- **Confirmed working (2026-08-03)**: launched from a machine's own interactive desktop session, the tray icon renders the "N7" glyph correctly and picks the right light/dark variant for the taskbar theme; with no env vars set, the client prompts for server address and workspace ID via the setup dialog. Running it over SSH does **not** show any of this — Windows session isolation puts an SSH-launched process's UI in a different, non-visible session. See Section 13.6 for the automated UI-verification harness built to work around that.
+
+#### 4.2.1 Client UI: cross-platform via native webview (revised 2026-08-03)
+
+The helper processes were originally PowerShell + WinForms/WPF, which looked correct but was **Windows-only** — in direct conflict with the Windows *and* macOS goal in Section 2. The UI layer is being moved to **`wry` + `tao`** (the libraries Tauri is built on, used directly since embedded HTML needs no CLI, config files or frontend bundler):
+
+| Concern | Approach |
+|---|---|
+| Rendering | HTML/CSS in a native webview — WebView2 on Windows (ships with Windows 11), WKWebView on macOS (built in). One UI implementation, both platforms. |
+| Design | `client/src/bin/status-window.html` reuses the Admin Console's palette and layout language, so the server console and the device agent read as one product. |
+| Main-thread requirement | macOS requires UI to own the main thread. The pre-existing separate-helper-process architecture already satisfies this for free: each window owns its own process and main thread, so the daemon's tokio runtime never yields. |
+| Host access | The page does no filesystem or process work. It sends narrow IPC actions (`open-config`, `open-url`) to Rust, and `open-url` accepts `https://` only, so a malformed message can't launch a local program. |
+| Update check | Done with `fetch()` inside the webview against GitHub's CORS-enabled releases API, avoiding an HTTP+TLS stack in the agent purely for a version comparison. |
+| Dependency gating | `wry`/`tao`/`tray-icon`/`rfd` are scoped to `cfg(any(target_os = "windows", target_os = "macos"))`. wry needs WebKitGTK system packages on Linux, which would break the Linux compile-check used for fast iteration — and a Linux client is an explicit v1 non-goal. The helpers keep a text-output fallback on Linux so they stay usable while developing there. |
+
+**Status**: the status window is converted and verified on Windows. `setup-helper`, `consent-helper` and `tray-helper` are still PowerShell/WinForms and remain to be ported (`rfd` for the consent dialog, `tray-icon` for the tray, a webview form for setup). **Nothing here is verified on macOS** — there's no Mac in the loop yet, the way `lab1` covers Windows.
 
 **Scheduler**
 - Runs the periodic health check-in (default cadence, e.g. 30 minutes) plus event-driven triggers (e.g. a plugin detects an anomaly and requests immediate analysis).
@@ -487,3 +502,36 @@ That starts `podman system service` on `127.0.0.1:8888` inside the distro and ad
 Two deliberate choices worth knowing:
 - **Bound to `127.0.0.1`, never `0.0.0.0`.** The podman API is an unauthenticated container control plane; with mirrored networking enabled, a wildcard bind would expose it to the whole tailnet.
 - **Version skew is fine.** Windows `podman.exe` (6.x) talks to the distro's podman (5.x) over the REST API without issue — verified listing the running dev containers.
+
+### 13.6 Automated UI Verification on the Test Box (2026-08-03)
+
+Windows isolates an SSH session from the interactive desktop, so a UI process launched over SSH throws `"not running in UserInteractive mode"` and its tray icon renders where nobody can see it. That made every client UI change dependent on a human sitting at `lab1`. `scripts/lab1-ui.ps1` removes that dependency:
+
+1. **Runs in the real session** — registers a Scheduled Task with an *interactive* logon type (`schtasks /it`), triggered on demand over SSH, so the target launches on the logged-on user's desktop.
+2. **Captures what rendered** — `scripts/lab1-ui-harness.ps1` grabs the window image and a UI Automation dump of its controls, both copied back locally for review.
+3. **Drives the UI** — clicks controls (including multi-step sequences, needed to reach a control on a page that isn't shown yet) and captures the result, so behavior can be asserted rather than eyeballed.
+
+```powershell
+.\scripts\lab1-ui.ps1 install       # once, and after editing the harness
+.\scripts\lab1-ui.ps1 status        # capture the agent status window
+.\scripts\lab1-ui.ps1 plugins       # navigate to Plugins, capture
+.\scripts\lab1-ui.ps1 update-check  # click "Check for updates", capture the outcome
+.\scripts\lab1-ui.ps1 tray          # start the agent, capture the notification area
+```
+
+Artifacts land in `.ui-artifacts/` (gitignored). This immediately paid for itself, catching defects that text assertions could never surface: a window rendered at 2x with 1x control coordinates, every line of a read-only text box pre-selected, content clipped behind a scrollbar, and "0 apps / 0 findings" displayed after a failed check-in instead of last-known values.
+
+Constraints worth knowing before relying on it:
+
+| Capability | Requirement |
+|---|---|
+| UI Automation (read control text, click, assert) | A logged-on session — works even while the screen is locked |
+| Window capture (`PrintWindow`) | A logged-on session; works without a visible desktop, which is why it's the primary capture method |
+| Full-desktop screenshot (`CopyFromScreen`) | An **actively connected** session with an attached display |
+| The interactive task running at all | An **actively connected** session — a disconnected RDP session still reports as logged on but the task silently refuses to run |
+
+So a closed RDP window breaks it. For unattended use, log in at the physical console, or move the session there with `tscon <id> /dest:console`.
+
+Two traps that cost real time and are now guarded against in the scripts:
+- **The harness must be pure ASCII.** Windows PowerShell 5.1 reads `.ps1` as ANSI unless the file has a UTF-8 BOM, so a UTF-8 em-dash arrives mangled. In a comment that's cosmetic; inside a code string it's a fatal parse error whose only symptom is "task exited 1, no artifacts". `install` now refuses to deploy non-ASCII or unparseable harness files.
+- **Clear remote artifacts before triggering.** Polling for `result.json` without deleting it first sees the *previous* run's file instantly and copies back stale output — reporting an old outcome as the current one.

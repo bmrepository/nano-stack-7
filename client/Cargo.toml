@@ -10,6 +10,8 @@ snow = "0.9"
 prost = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1"
@@ -17,3 +19,17 @@ hostname = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
+
+# Cross-platform UI stack, per README Section 2's Windows + macOS goal. These
+# are the libraries Tauri is built on, used directly rather than via Tauri
+# itself: the helper windows embed their own HTML, so a CLI, config files and a
+# frontend bundler would all be overhead.
+#
+# Gated to Windows/macOS deliberately. wry needs WebKitGTK system packages on
+# Linux, which would break the Linux compile-check used for fast iteration -
+# and a Linux client is an explicit v1 non-goal (README Section 2).
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+wry = "0.56"
+tao = "0.36"
+tray-icon = "0.24"
+rfd = "0.17"

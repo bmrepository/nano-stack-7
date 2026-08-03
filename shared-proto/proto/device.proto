@@ -52,6 +52,25 @@ message CheckInResponse {
     bool accepted = 1;
     int64 server_time_unix = 2;
     repeated Finding findings = 3;
+
+    // Workspace configuration pushed down on every check-in. The client
+    // mirrors these into the [synced] section of its local NS7Conf.toml, so
+    // the config it's actually running is inspectable on the device (and so
+    // a future standalone mode has the same shape to fall back on).
+    string server_version = 4;
+    string workspace_name = 5;
+    int64 checkin_interval_secs = 6;
+    repeated PluginConfig plugins = 7;
+}
+
+message PluginConfig {
+    string id = 1;
+    string name = 2;
+    bool enabled = 3;
+    // "auto" | "ask" — the consent tier from README Section 6. Config-driven
+    // per README Section 10 decision 2, though the Plugin Manager UI that
+    // would let an admin change it is still Phase 3 work.
+    string consent_tier = 4;
 }
 
 // Milestone (c): one hardcoded patch-management finding rule.

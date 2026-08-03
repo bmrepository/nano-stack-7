@@ -4,6 +4,7 @@ mod checkin_channel;
 mod db;
 mod device_channel;
 mod finding;
+mod plugins;
 mod registry;
 mod workspace;
 
@@ -29,11 +30,11 @@ async fn main() -> anyhow::Result<()> {
     let admin_api = tokio::spawn(run_admin_api(workspaces.clone(), registry.clone(), auth));
     let enrollment = tokio::spawn(device_channel::run(
         identity.clone(),
-        workspaces,
+        workspaces.clone(),
         registry.clone(),
         "0.0.0.0:7777",
     ));
-    let checkin = tokio::spawn(checkin_channel::run(identity, registry, "0.0.0.0:7778"));
+    let checkin = tokio::spawn(checkin_channel::run(identity, workspaces, registry, "0.0.0.0:7778"));
 
     tokio::select! {
         res = admin_api => { res??; }

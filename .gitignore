@@ -1,3 +1,6 @@
 /target
 **/target
 *.pdb
+
+# UI validation artifacts pulled back from the test box (screenshots, dumps)
+.ui-artifacts/

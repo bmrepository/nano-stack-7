@@ -1,9 +1,25 @@
+use crate::config::PluginEntry;
 use shared_proto::{noise, CheckInResponse};
 use tokio::net::TcpStream;
 
-/// Milestone (b): one inventory collection + check-in round-trip over
-/// Noise_IK, using the identity/workspace keys established at enrollment.
-pub async fn run_once(server_addr: &str, identity_key: &[u8], workspace_public_key: &[u8]) -> anyhow::Result<()> {
+/// What a successful check-in learned from the server — fed into both
+/// NS7Conf.toml's `[synced]` section and the status snapshot.
+pub struct CheckInResult {
+    pub server_version: String,
+    pub workspace_name: String,
+    pub checkin_interval_secs: i64,
+    pub plugins: Vec<PluginEntry>,
+    pub installed_app_count: usize,
+    pub finding_count: usize,
+}
+
+/// One inventory collection + check-in round-trip over Noise_IK, using the
+/// identity/workspace keys established at enrollment.
+pub async fn run_once(
+    server_addr: &str,
+    identity_key: &[u8],
+    workspace_public_key: &[u8],
+) -> anyhow::Result<CheckInResult> {
     let mut stream = TcpStream::connect(server_addr).await?;
     let (mut transport, _responder_static) =
         noise::handshake_ik_initiator(&mut stream, identity_key, workspace_public_key).await?;
@@ -20,7 +36,9 @@ pub async fn run_once(server_addr: &str, identity_key: &[u8], workspace_public_k
     tracing::info!(
         installed_app_count = inventory.installed_apps.len(),
         server_time_unix = response.server_time_unix,
+        server_version = %response.server_version,
         finding_count = response.findings.len(),
+        plugin_count = response.plugins.len(),
         "check-in successful"
     );
 
@@ -63,5 +81,21 @@ pub async fn run_once(server_addr: &str, identity_key: &[u8], workspace_public_k
         }
     }
 
-    Ok(())
+    Ok(CheckInResult {
+        server_version: response.server_version,
+        workspace_name: response.workspace_name,
+        checkin_interval_secs: response.checkin_interval_secs,
+        plugins: response
+            .plugins
+            .into_iter()
+            .map(|p| PluginEntry {
+                id: p.id,
+                name: p.name,
+                enabled: p.enabled,
+                consent_tier: p.consent_tier,
+            })
+            .collect(),
+        installed_app_count: inventory.installed_apps.len(),
+        finding_count: response.findings.len(),
+    })
 }

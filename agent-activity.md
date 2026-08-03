@@ -4,6 +4,23 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-03
 
+### Client UI: modern redesign, then re-architected for cross-platform
+
+Two connected pieces of work, in the order they happened.
+
+**1. Modern redesign (WinForms -> WPF).** User asked for a design inspired by an attached mockup (dark left sidebar, teal accent header, light card-based content). WinForms can't reasonably produce that, so the status window was rebuilt in WPF/XAML — which also removed the DPI problems, since WPF is DPI-aware by default. Switched from `format!` to placeholder replacement (`__STATUS_PATH__` etc.) because XAML is brace-heavy and escaping every brace for `format!` is a needless source of breakage. Palette deliberately matched the React Admin Console so server console and device agent read as one product. Verified via screenshot: dark sidebar with accent bar on the active nav item, teal header with a Connected pill, rounded white cards, large stat numbers. Nav (Overview/Plugins/Updates) worked — Plugins page rendered the server-pushed plugin row correctly.
+
+**2. Re-architected for Windows + macOS.** User pointed out the cross-platform requirement, and they were right: WPF is Windows-only, and so was the pattern behind *all four* helpers (all PowerShell + WinForms/WPF), directly conflicting with README Section 2's Windows-and-macOS goal. Offered three options (webview via Tauri/wry, pure-Rust Slint/egui, or per-platform native WPF+SwiftUI); user chose the webview route and asked to switch immediately rather than finish the Windows PoC first.
+  - Chose **`wry` + `tao` directly** rather than full Tauri: the helper windows embed their own HTML, so Tauri's CLI, config files and frontend bundler would all be overhead.
+  - Key architectural realisation: macOS requires UI to own the main thread, and the pre-existing separate-helper-process design already satisfies that for free — each window owns its own process and main thread, so the daemon's tokio runtime never has to yield. No daemon restructuring needed.
+  - Resolved dependency versions with `cargo add --dry-run` rather than guessing: `wry 0.56`, `tao 0.36`, `tray-icon 0.24.2`, `rfd 0.17.2`.
+  - **Gated the deps to `cfg(any(target_os = "windows", target_os = "macos"))`** — wry needs WebKitGTK system packages on Linux, which would have broken the WSL2 Linux compile-check used for fast iteration, and a Linux client is an explicit v1 non-goal. Helpers keep a text-output fallback on Linux so they stay useful when developing there. Verified: Linux `cargo build -p client` still succeeds.
+  - Rewrote `status-helper.rs` around a webview: builds a `ViewModel`, serializes it to JSON, injects it into `client/src/bin/status-window.html` (new) at `__STATUS_JSON__`. The page never touches the filesystem.
+  - Host access is deliberately narrow: the page sends only `open-config` / `open-url` over wry's IPC, and `open-url` **rejects anything that isn't `https://`** so a malformed or hostile message can't launch a local program.
+  - Update check uses `fetch()` in the webview against GitHub's CORS-enabled releases API, avoiding an HTTP+TLS stack in the agent purely for a version comparison. Auto-install was reduced to "open the release page": downloading and executing an installer differs fundamentally per platform (MSI vs dmg/pkg), so a single cross-platform auto-install isn't honest yet — noted as follow-up.
+  - Deleted the now-superseded `status-helper.ps1`.
+  - **Still to port**: `setup-helper`, `consent-helper`, `tray-helper` remain PowerShell/WinForms (planned: `rfd` for consent, `tray-icon` for the tray, a webview form for setup). **Nothing is verified on macOS** — no Mac in the loop yet, the way lab1 covers Windows. Recorded honestly in README Section 4.2.1.
+
 ### Full local (DEV) end-to-end test — passed
 
 First real exercise of the complete dev environment after the dev/prod split, on current `main` (`1d290d2`, clean tree).

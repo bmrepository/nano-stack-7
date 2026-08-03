@@ -59,3 +59,31 @@ pub fn save_workspace_public_key(key: &[u8]) -> anyhow::Result<PathBuf> {
 pub fn load_workspace_public_key() -> anyhow::Result<Vec<u8>> {
     Ok(std::fs::read(state_dir().join("workspace_public_key.bin"))?)
 }
+
+/// Reads the device ID out of the stored certificate, for display purposes.
+/// Returns `None` rather than erroring when not yet enrolled.
+pub fn load_device_id() -> Option<String> {
+    use prost::Message;
+    let bytes = std::fs::read(state_dir().join("device_cert.bin")).ok()?;
+    shared_proto::DeviceCertificate::decode(bytes.as_slice())
+        .ok()
+        .map(|cert| cert.device_id)
+}
+
+/// Discards this device's enrollment so the next run enrolls afresh.
+///
+/// Removes the identity keypair too, not just the certificate: keeping the
+/// old key would re-enroll under the same public key, which the server treats
+/// as the *same* device (its registry is keyed on that), producing a confusing
+/// half-reset rather than a genuinely new device.
+pub fn clear_enrollment() -> anyhow::Result<()> {
+    let dir = state_dir();
+    for name in ["device_cert.bin", "workspace_public_key.bin", "identity.key"] {
+        let path = dir.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+            tracing::debug!(path = ?path, "removed enrollment file");
+        }
+    }
+    Ok(())
+}

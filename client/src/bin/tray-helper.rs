@@ -27,6 +27,7 @@ fn main() {
             .unwrap_or_default();
         let light_icon = exe_dir.join("ns7-icon-light.ico");
         let dark_icon = exe_dir.join("ns7-icon-dark.ico");
+        let status_helper = exe_dir.join("status-helper.exe");
 
         let script = format!(
             r#"
@@ -58,6 +59,24 @@ $notifyIcon.Text = "Nano Stack 7 Agent - Running"
 $notifyIcon.Visible = $true
 
 $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+
+$statusItem = $contextMenu.Items.Add("Status...")
+$statusItem.add_Click({{
+    if (Test-Path "{status_helper}") {{
+        Start-Process -FilePath "{status_helper}"
+    }}
+}})
+
+# Double-clicking the tray icon is the conventional way to open an agent's
+# window, so wire it to the same action as the menu item.
+$notifyIcon.add_DoubleClick({{
+    if (Test-Path "{status_helper}") {{
+        Start-Process -FilePath "{status_helper}"
+    }}
+}})
+
+$contextMenu.Items.Add("-") | Out-Null
+
 $exitItem = $contextMenu.Items.Add("Exit Nano Stack 7 Agent")
 $exitItem.add_Click({{
     $notifyIcon.Visible = $false
@@ -69,6 +88,7 @@ $notifyIcon.ContextMenuStrip = $contextMenu
 "#,
             light_icon = light_icon.display(),
             dark_icon = dark_icon.display(),
+            status_helper = status_helper.display(),
         );
 
         let status = std::process::Command::new("powershell")

@@ -1,0 +1,475 @@
+<!doctype html>
+<!--
+  Nano Stack 7 agent status window.
+
+  Rendered in a native webview (wry) so one UI serves both Windows and macOS -
+  see README Section 2's cross-platform goal. Replaces an earlier WPF version
+  that looked right but only ran on Windows.
+
+  Data is injected by status-helper.rs as a JSON blob at __STATUS_JSON__; the
+  page never reads the filesystem itself.
+
+  The palette matches the React Admin Console so the server console and the
+  device agent read as one product.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Nano Stack 7 Agent</title>
+<style>
+  :root {
+    --sidebar: #161a21;
+    --sidebar-top: #12161c;
+    --sidebar-hover: #1c212b;
+    --accent: #3ecf8e;
+    --accent-dark: #0b3d28;
+    --accent-hover: #35b87e;
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text: #1a1d23;
+    --text-dim: #6b7280;
+    --text-faint: #9ca3af;
+    --ok: #1b8a5a;
+    --ok-bg: #e7f7ef;
+    --warn: #e0a53a;
+    --danger: #c0392b;
+    --danger-bg: #fdecea;
+    --danger-border: #f5c6c0;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    /* A desktop app shouldn't feel like a web page. */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .layout { display: flex; height: 100%; }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--sidebar);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 20px 18px;
+    background: var(--sidebar-top);
+  }
+  .brand-mark {
+    background: var(--accent);
+    color: var(--accent-dark);
+    font-weight: 700;
+    font-size: 13px;
+    border-radius: 6px;
+    padding: 4px 7px;
+  }
+  .brand-name { color: #fff; font-weight: 600; font-size: 14.5px; }
+
+  .nav-heading {
+    color: #4b5563;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 18px 18px 8px;
+  }
+
+  .nav-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    border-left: 3px solid transparent;
+    color: #9aa4b2;
+    font: inherit;
+    font-size: 13.5px;
+    padding: 11px 18px;
+    cursor: pointer;
+  }
+  .nav-item:hover { background: var(--sidebar-hover); color: #e6e9ef; }
+  .nav-item.active {
+    background: var(--sidebar-hover);
+    border-left-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .sidebar-footer {
+    margin-top: auto;
+    padding: 18px;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .sidebar-footer .dim { color: #4b5563; }
+
+  /* ---------- Content ---------- */
+  .content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  .header {
+    height: 62px;
+    flex-shrink: 0;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 26px;
+  }
+  .header h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--accent-dark);
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 14px;
+    padding: 6px 13px;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.ok .dot { background: var(--accent); }
+  .pill.bad { background: var(--danger-bg); color: var(--danger); }
+  .pill.bad .dot { background: #e0553a; }
+
+  .pages { flex: 1; overflow-y: auto; padding: 22px 26px; }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    margin: 0 0 10px;
+  }
+  .section-title:not(:first-child) { margin-top: 22px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 15px 18px;
+  }
+  .card + .card { margin-top: 14px; }
+
+  .label {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .label:not(:first-child) { margin-top: 14px; }
+  .value { font-size: 14px; }
+  .value.mono {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 12.5px;
+    /* IDs are the one thing people genuinely need to copy out of here. */
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  .value.big { font-size: 26px; font-weight: 700; }
+  .value.big.warn { color: var(--warn); }
+
+  .error-card {
+    background: var(--danger-bg);
+    border-color: var(--danger-border);
+    margin-top: 18px;
+  }
+  .error-card .label { color: var(--danger); }
+  .error-card .value { color: #8e2b21; font-size: 12.5px; }
+
+  /* ---------- Table ---------- */
+  .table { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .table-head, .table-row {
+    display: grid;
+    grid-template-columns: 1fr 110px 130px;
+    padding: 12px 16px;
+    align-items: center;
+  }
+  .table-head {
+    background: #f9fafb;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+  }
+  .table-row { border-top: 1px solid #f3f4f6; font-size: 13.5px; }
+  .table-row .enabled { color: var(--ok); }
+  .table-row .consent { color: var(--text-dim); }
+  .empty { padding: 16px; color: var(--text-faint); font-size: 12.5px; }
+
+  .hint { color: var(--text-dim); font-size: 12px; margin: 0 0 12px; }
+  .footnote { color: var(--text-faint); font-size: 11.5px; margin: 12px 2px 0; line-height: 1.5; }
+
+  /* ---------- Buttons ---------- */
+  .actions { display: flex; gap: 10px; margin-top: 18px; }
+  button.primary, button.ghost {
+    font: inherit;
+    font-size: 13px;
+    border-radius: 6px;
+    padding: 9px 18px;
+    cursor: pointer;
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-dark);
+    border: 0;
+    font-weight: 600;
+  }
+  button.primary:hover { background: var(--accent-hover); }
+  button.primary:disabled { opacity: 0.6; cursor: default; }
+  button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+  button.ghost:hover { background: #f3f4f6; }
+
+  .update-msg { margin-top: 14px; font-size: 12.5px; color: var(--text-dim); }
+  .update-msg.ok { color: var(--ok); }
+  .update-msg.warn { color: #b4740a; }
+  .update-msg.bad { color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">N7</span>
+      <span class="brand-name">Nano Stack 7</span>
+    </div>
+    <div class="nav-heading">AGENT</div>
+    <button class="nav-item active" data-page="overview">Overview</button>
+    <button class="nav-item" data-page="plugins">Plugins</button>
+    <button class="nav-item" data-page="updates">Updates</button>
+    <div class="sidebar-footer">
+      <div id="footer-mode"></div>
+      <div class="dim" id="footer-version"></div>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="header">
+      <h1 id="page-title">Overview</h1>
+      <span id="conn-pill" class="pill"><span class="dot"></span><span id="conn-text"></span></span>
+    </div>
+
+    <div class="pages">
+      <section id="page-overview" class="page active">
+        <p class="section-title">CONNECTION</p>
+        <div class="grid-2">
+          <div class="card">
+            <div class="label">SERVER ADDRESS</div>
+            <div class="value" id="server-host"></div>
+            <div class="label">SERVER VERSION</div>
+            <div class="value" id="server-version"></div>
+          </div>
+          <div class="card">
+            <div class="label">LAST CHECK-IN</div>
+            <div class="value" id="last-checkin"></div>
+            <div class="label">MODE</div>
+            <div class="value" id="mode"></div>
+          </div>
+        </div>
+
+        <p class="section-title">WORKSPACE</p>
+        <div class="card">
+          <div class="label">NAME</div>
+          <div class="value" id="workspace-name"></div>
+          <div class="label">WORKSPACE ID</div>
+          <div class="value mono" id="workspace-id"></div>
+          <div class="label">DEVICE ID</div>
+          <div class="value mono" id="device-id"></div>
+        </div>
+
+        <p class="section-title">LAST INVENTORY</p>
+        <div class="grid-2">
+          <div class="card">
+            <div class="label">INSTALLED APPS</div>
+            <div class="value big" id="apps"></div>
+          </div>
+          <div class="card">
+            <div class="label">OPEN FINDINGS</div>
+            <div class="value big warn" id="findings"></div>
+          </div>
+        </div>
+
+        <div class="card error-card" id="error-card" hidden>
+          <div class="label">LAST ERROR</div>
+          <div class="value" id="last-error"></div>
+        </div>
+      </section>
+
+      <section id="page-plugins" class="page">
+        <p class="section-title">ENABLED PLUGINS</p>
+        <p class="hint">Pushed down by the server on each check-in and mirrored into NS7Conf.toml.</p>
+        <div class="table">
+          <div class="table-head">
+            <div>PLUGIN</div><div>ENABLED</div><div>CONSENT TIER</div>
+          </div>
+          <div id="plugin-rows"></div>
+        </div>
+      </section>
+
+      <section id="page-updates" class="page">
+        <p class="section-title">AGENT UPDATES</p>
+        <div class="card">
+          <div class="label">INSTALLED VERSION</div>
+          <div class="value big" id="client-version"></div>
+          <div class="update-msg" id="update-msg">Check whether a newer release is available.</div>
+          <div class="actions">
+            <button class="primary" id="btn-check">Check for updates</button>
+            <button class="ghost" id="btn-config">Open NS7Conf.toml</button>
+          </div>
+        </div>
+        <p class="footnote">
+          Releases are published on GitHub. If a newer version exists you can open its download
+          page; the agent is replaced once the installer runs.
+        </p>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+  const DATA = __STATUS_JSON__;
+
+  const $ = (id) => document.getElementById(id);
+  const dash = (v) => (v === null || v === undefined || v === "" ? "-" : String(v));
+
+  // ---------- Populate ----------
+  const connected = !!DATA.connected;
+  $("conn-pill").classList.add(connected ? "ok" : "bad");
+  $("conn-text").textContent = connected ? "Connected" : "Not connected";
+
+  const mode = DATA.standalone_mode ? "Standalone (local AI only)" : "Server-managed";
+  $("mode").textContent = mode;
+  $("footer-mode").textContent = mode;
+  $("footer-version").textContent = "Agent v" + DATA.client_version;
+  $("client-version").textContent = "v" + DATA.client_version;
+
+  $("server-host").textContent = dash(DATA.server_host);
+  $("server-version").textContent = dash(DATA.server_version);
+  $("workspace-name").textContent = dash(DATA.workspace_name);
+  $("workspace-id").textContent = dash(DATA.workspace_id);
+  $("device-id").textContent = DATA.device_id ? DATA.device_id : "(not enrolled)";
+  $("apps").textContent = DATA.installed_app_count ?? 0;
+  $("findings").textContent = DATA.finding_count ?? 0;
+
+  $("last-checkin").textContent = DATA.last_checkin_unix
+    ? new Date(DATA.last_checkin_unix * 1000).toLocaleString()
+    : "-";
+
+  if (DATA.last_error) {
+    $("last-error").textContent = DATA.last_error;
+    $("error-card").hidden = false;
+  }
+
+  const rows = DATA.plugins || [];
+  const rowsEl = $("plugin-rows");
+  if (rows.length === 0) {
+    rowsEl.innerHTML = '<div class="empty">No plugins reported yet - waiting for the first check-in.</div>';
+  } else {
+    for (const p of rows) {
+      const div = document.createElement("div");
+      div.className = "table-row";
+      const name = document.createElement("div");
+      name.textContent = p.name;
+      const enabled = document.createElement("div");
+      enabled.className = "enabled";
+      enabled.textContent = p.enabled ? "Yes" : "No";
+      const consent = document.createElement("div");
+      consent.className = "consent";
+      consent.textContent = p.consent_tier;
+      div.append(name, enabled, consent);
+      rowsEl.appendChild(div);
+    }
+  }
+
+  // ---------- Navigation ----------
+  const titles = { overview: "Overview", plugins: "Plugins", updates: "Updates" };
+  for (const btn of document.querySelectorAll(".nav-item")) {
+    btn.addEventListener("click", () => {
+      const page = btn.dataset.page;
+      document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b === btn));
+      document.querySelectorAll(".page").forEach((p) => p.classList.toggle("active", p.id === "page-" + page));
+      $("page-title").textContent = titles[page];
+    });
+  }
+
+  // ---------- Native bridge ----------
+  // Anything needing OS access (opening a file or URL) goes through wry's IPC
+  // to Rust; the page itself does no filesystem or process work.
+  const native = (payload) => window.ipc.postMessage(JSON.stringify(payload));
+  $("btn-config").addEventListener("click", () => native({ action: "open-config" }));
+
+  // ---------- Update check ----------
+  // Done with fetch() in the webview rather than an HTTP client in Rust: the
+  // GitHub releases API is CORS-enabled, so this avoids pulling a TLS stack
+  // into the agent purely for a version comparison.
+  const cmpVersions = (a, b) => {
+    const pa = a.split(".").map(Number);
+    const pb = b.split(".").map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  };
+
+  $("btn-check").addEventListener("click", async () => {
+    const msg = $("update-msg");
+    const btn = $("btn-check");
+    msg.className = "update-msg";
+    msg.textContent = "Checking GitHub for a newer release...";
+    btn.disabled = true;
+    try {
+      const res = await fetch("https://api.github.com/repos/" + DATA.repo + "/releases/latest", {
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (!res.ok) throw new Error("GitHub returned " + res.status);
+      const release = await res.json();
+      const latest = String(release.tag_name || "").replace(/^v/, "");
+      if (latest && cmpVersions(latest, DATA.client_version) > 0) {
+        msg.className = "update-msg warn";
+        msg.textContent = "Update available: v" + latest + " (installed v" + DATA.client_version + ").";
+        const open = document.createElement("button");
+        open.className = "primary";
+        open.textContent = "Open v" + latest + " download";
+        open.addEventListener("click", () =>
+          native({ action: "open-url", url: release.html_url })
+        );
+        $("btn-check").after(open);
+      } else {
+        msg.className = "update-msg ok";
+        msg.textContent = "Up to date (v" + DATA.client_version + " is the latest release).";
+      }
+    } catch (e) {
+      msg.className = "update-msg bad";
+      msg.textContent = "Update check failed: " + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

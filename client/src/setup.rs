@@ -1,14 +1,14 @@
-use crate::config::ClientConfig;
+use crate::config::Ns7Config;
 
 /// Runs the first-run setup dialog (`setup-helper`, a sibling binary) and
 /// returns what the user entered, or `None` if they cancelled.
-pub fn prompt(existing: Option<&ClientConfig>) -> Option<ClientConfig> {
+pub fn prompt(existing: Option<&Ns7Config>) -> Option<Ns7Config> {
     let helper = helper_binary_path()?;
 
     let mut cmd = std::process::Command::new(&helper);
     if let Some(cfg) = existing {
-        cmd.env("NANO_STACK_7_SERVER_HOST", &cfg.server_host)
-            .env("NANO_STACK_7_WORKSPACE_ID", &cfg.workspace_id);
+        cmd.env("NANO_STACK_7_SERVER_HOST", &cfg.server.host)
+            .env("NANO_STACK_7_WORKSPACE_ID", &cfg.workspace.id);
     }
 
     let output = match cmd.output() {
@@ -35,10 +35,7 @@ pub fn prompt(existing: Option<&ClientConfig>) -> Option<ClientConfig> {
         }
     }
 
-    Some(ClientConfig {
-        server_host: server_host?,
-        workspace_id: workspace_id?,
-    })
+    Some(Ns7Config::new(server_host?, workspace_id?))
 }
 
 fn helper_binary_path() -> Option<std::path::PathBuf> {
