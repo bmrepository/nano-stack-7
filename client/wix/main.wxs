@@ -1,0 +1,87 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  Nano Stack 7 client installer (WiX Toolset v3 / cargo-wix).
+
+  UNVERIFIED: authored without access to a working WiX build environment
+  this session (lab1, the only box with cargo-wix installed, was
+  intermittently offline). Built and published via
+  .github/workflows/release-client.yml on GitHub's windows-latest runner,
+  which ships WiX v3 preinstalled. If `cargo wix` fails there, the most
+  likely culprits are the relative Source paths below (assumed relative to
+  the `client/` package directory, since `client` is a workspace member and
+  its build output lands in the *workspace* target dir, not its own).
+
+  Packages all three binaries (the daemon plus its two helper processes)
+  and the tray icon assets into one installer, since the daemon expects
+  consent-helper.exe/tray-helper.exe/ns7-icon-*.ico to sit alongside it.
+-->
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+    <Product
+        Id='*'
+        Name='Nano Stack 7 Client'
+        UpgradeCode='37DBC019-3B96-4A69-AC0B-4D675707E78E'
+        Manufacturer='Nano Stack 7'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package Id='*'
+            Keywords='Installer'
+            Description='Nano Stack 7 Client Agent Installer'
+            Manufacturer='Nano Stack 7'
+            InstallerVersion='450'
+            Languages='1033'
+            Compressed='yes'
+            InstallScope='perMachine'
+            SummaryCodepage='1252'/>
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
+        <Property Id='DiskPrompt' Value='Nano Stack 7 Client Installation'/>
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='ProgramFiles64Folder' Name='PFiles'>
+                <Directory Id='APPLICATIONFOLDER' Name='Nano Stack 7'>
+                    <Component Id='ClientExe' Guid='*' Win64='yes'>
+                        <File Id='ClientExe' Name='client.exe' DiskId='1' Source='..\target\release\client.exe' KeyPath='yes'/>
+                    </Component>
+                    <Component Id='ConsentHelperExe' Guid='*' Win64='yes'>
+                        <File Id='ConsentHelperExe' Name='consent-helper.exe' DiskId='1' Source='..\target\release\consent-helper.exe' KeyPath='yes'/>
+                    </Component>
+                    <Component Id='TrayHelperExe' Guid='*' Win64='yes'>
+                        <File Id='TrayHelperExe' Name='tray-helper.exe' DiskId='1' Source='..\target\release\tray-helper.exe' KeyPath='yes'/>
+                    </Component>
+                    <Component Id='IconLight' Guid='*' Win64='yes'>
+                        <File Id='IconLightFile' Name='ns7-icon-light.ico' DiskId='1' Source='assets\ns7-icon-light.ico' KeyPath='yes'/>
+                    </Component>
+                    <Component Id='IconDark' Guid='*' Win64='yes'>
+                        <File Id='IconDarkFile' Name='ns7-icon-dark.ico' DiskId='1' Source='assets\ns7-icon-dark.ico' KeyPath='yes'/>
+                    </Component>
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <Feature
+            Id='Binaries'
+            Title='Nano Stack 7 Client'
+            Description='Installs the Nano Stack 7 client agent and its helper processes.'
+            Level='1'
+            ConfigurableDirectory='APPLICATIONFOLDER'
+            AllowAdvertise='no'
+            Display='expand'
+            Absent='disallow'>
+            <ComponentRef Id='ClientExe'/>
+            <ComponentRef Id='ConsentHelperExe'/>
+            <ComponentRef Id='TrayHelperExe'/>
+            <ComponentRef Id='IconLight'/>
+            <ComponentRef Id='IconDark'/>
+        </Feature>
+
+        <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
+        <Icon Id='ProductICO' SourceFile='assets\ns7-icon-light.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
+    </Product>
+</Wix>

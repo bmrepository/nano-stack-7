@@ -65,8 +65,10 @@ impl Registry {
         devices.values().cloned().collect()
     }
 
-    pub fn count(&self) -> usize {
-        let devices = self.devices.lock().expect("registry mutex poisoned");
-        devices.len()
+    /// Immediate revocation cascade for workspace deletion (README Section
+    /// 10, decision 4): removes every device enrolled under this workspace.
+    pub fn remove_by_workspace(&self, workspace_id: &str) {
+        let mut devices = self.devices.lock().expect("registry mutex poisoned");
+        devices.retain(|_, record| record.cert.workspace_id != workspace_id);
     }
 }

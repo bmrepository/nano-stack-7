@@ -4,6 +4,32 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Multi-workspace CRUD + custom tray icons + client installer pipeline
+
+- **Custom tray icons**: generated `client/assets/ns7-icon-light.ico`/`ns7-icon-dark.ico` (32×32, "N7" glyph matching the Admin Console brand mark) via a `System.Drawing`-based PowerShell script run directly on the dev PC (`Bitmap` → `GetHicon()` → `Icon.Save()`), verified both load correctly (`New-Object System.Drawing.Icon(...)`, confirmed 32×32). Updated `client/src/bin/tray-helper.rs` to pick between them at runtime based on `HKCU:\...\Personalize\SystemUsesLightTheme`, falling back to `SystemIcons.Application` if the files are missing. Fixed a logic bug caught before shipping: the light/dark selection was initially inverted.
+- **Diagnosed and confirmed the tray icon / SSH session-isolation issue**: user ran `client.exe` directly on `lab1`'s own desktop and confirmed the icon now appears — confirming the earlier SSH-launched test only failed to *render* (not to run) because Windows isolates an SSH session from the physically-visible interactive session. Documented this in the README as a known constraint (also affects `consent-helper`'s dialog).
+- **Multi-workspace refactor** — the previous single-hardcoded-workspace design didn't scale to real workspace management, and its per-workspace Noise identity fundamentally couldn't (a Noise_XX responder must present its static key before decrypting anything that could reveal which workspace a client wants):
+  - Rewrote `server/src/workspace.rs`: `ServerIdentity` (one server-wide Noise key, env `SERVER_PRIVATE_KEY_HEX`, replaces the old per-workspace `WORKSPACE_PRIVATE_KEY_HEX`) + `WorkspaceStore` (in-memory `Vec<Workspace>`, `create`/`list`/`find_by_id`/`delete`/`rename`). A workspace is now just `{ id (UUID), name, created_at_unix }` — no crypto key of its own.
+  - `shared-proto/proto/device.proto`: renamed `EnrollmentRequest.workspace_enrollment_token` → `workspace_id` — per explicit user clarification, the workspace's UUID itself is the enrollment credential, not a separate token.
+  - `server/src/device_channel.rs`: Noise_XX responder now uses `ServerIdentity`; resolves the workspace via `workspaces.find_by_id(&request.workspace_id)` after decrypting the request, rejecting unknown IDs.
+  - `server/src/checkin_channel.rs`: Noise_IK responder and cert verification both use `ServerIdentity` instead of a per-workspace key.
+  - `server/src/registry.rs`: added `remove_by_workspace()` for the confirmed immediate-revocation cascade on workspace delete; removed the now-dead `count()` method.
+  - `server/src/api.rs`: replaced the old singular `GET /api/workspace` with full CRUD — `GET/POST /api/workspaces`, `PATCH/DELETE /api/workspaces/:id` — all behind `RequireAuth`. `ApiState.workspace` → `ApiState.workspaces: Arc<WorkspaceStore>`.
+  - `client/src/main.rs`: `WORKSPACE_ENROLLMENT_TOKEN` env → `WORKSPACE_ID`, now a hard requirement (errors clearly if unset, since there's no meaningful default for a UUID that doesn't exist until an admin creates it).
+  - Admin Console: removed `pages/Workspace.tsx`, added `pages/Workspaces.tsx` (list/create/rename/delete, copy-to-clipboard workspace ID, per-workspace "Download client" link); `hooks.ts`'s `useApiData` gained a `refetch()`; `api.ts` gained a generic `request()` helper (replacing separate `getJson`/`postJson`) supporting `PATCH`/`DELETE`; `Dashboard.tsx` and `Devices.tsx` (added a Workspace column) updated to use the new list endpoint.
+  - Built and tested in WSL2 + the containerized stack (`podman-compose build server` → `up -d --force-recreate server`), all via `curl` and the Claude Browser tool against `http://localhost:8080`:
+    - Fresh Setup screen confirmed on a recreated container (`admin_exists:false`).
+    - Created a workspace through the real UI form; got back a real UUID.
+    - Enrolled a device from WSL2 with `WORKSPACE_ID=<that uuid>` — succeeded, showed up correctly in the Devices table with the right workspace name (via the new join in `Devices.tsx`).
+    - Verified the delete cascade directly via the API: created a second workspace, enrolled a device into it, `DELETE /api/workspaces/:id` → `204`, then confirmed both `GET /api/devices` and `GET /api/workspaces` came back empty.
+    - Recreated the container one final time so the reviewer sees a genuine fresh Setup screen, not leftover test data.
+  - Cleaned up: killed the leftover backgrounded test client process in WSL2 (`pkill -f target/debug/client`).
+- **Client installer packaging + release pipeline** (explicitly the least-verified part of this session's work — no working WiX build environment was reachable to test against):
+  - Added `client/wix/main.wxs` (WiX Toolset v3 / `cargo-wix`) packaging `client.exe`, `consent-helper.exe`, `tray-helper.exe`, and both `.ico` assets into one MSI under `Program Files\Nano Stack 7`. Generated a fixed `UpgradeCode` GUID (`37dbc019-3b96-4a69-ac0b-4d675707e78e`).
+  - Added `.github/workflows/release-client.yml`: triggers on `v*` tag push or manual dispatch, runs on `windows-latest` (MSVC + WiX v3 preinstalled there — no dependency on `lab1` or any other specific machine to cut a release), installs `protoc` (`arduino/setup-protoc@v3`) and `cargo-wix`, runs `cargo wix -p client --output nano-stack-7-client-installer.msi`, publishes the MSI as a GitHub Release via `softprops/action-gh-release@v2` using the automatic `GITHUB_TOKEN` (no manual PAT needed).
+  - Admin Console's `Workspaces.tsx` links to the stable `.../releases/latest/download/nano-stack-7-client-installer.msi` URL.
+  - **Not yet verified**: this workflow has never actually run — it requires pushing to GitHub and creating a tag, both of which are the user's actions per the standing no-push policy. The riskiest part is the `.wxs`'s relative `Source` paths (`..\target\release\*.exe`, `assets\*.ico`), written from memory/documentation of `cargo-wix`'s conventions without a build to confirm against.
+
 ### Portainer-style admin auth + client tray icon
 
 - Added `server/src/auth.rs` (new): `AuthStore` (in-memory, no DB yet) — `admin_exists()`, `create_admin()` (double-checked-locking to close a race between concurrent setup calls, `bcrypt` password hashing), `verify_login()`, `is_valid_session()`; a `RequireAuth` axum extractor gating handlers behind a valid `Authorization: Bearer <token>` header.

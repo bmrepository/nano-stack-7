@@ -1,16 +1,16 @@
 use crate::auth::{AuthStore, RequireAuth};
 use crate::registry::Registry;
-use crate::workspace::WorkspaceConfig;
-use axum::extract::State;
+use crate::workspace::WorkspaceStore;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ApiState {
-    pub workspace: Arc<WorkspaceConfig>,
+    pub workspaces: Arc<WorkspaceStore>,
     pub registry: Arc<Registry>,
     pub auth: Arc<AuthStore>,
 }
@@ -37,9 +37,20 @@ struct DeviceDto {
 
 #[derive(Serialize)]
 struct WorkspaceDto {
-    workspace_id: String,
-    enrollment_token_configured: bool,
+    id: String,
+    name: String,
+    created_at_unix: i64,
     device_count: usize,
+}
+
+#[derive(Deserialize)]
+struct CreateWorkspaceRequest {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct RenameWorkspaceRequest {
+    name: String,
 }
 
 #[derive(Serialize)]
@@ -70,7 +81,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/auth/setup", post(auth_setup))
         .route("/api/auth/login", post(auth_login))
         .route("/api/devices", get(list_devices))
-        .route("/api/workspace", get(get_workspace))
+        .route("/api/workspaces", get(list_workspaces).post(create_workspace))
+        .route("/api/workspaces/:id", patch(rename_workspace).delete(delete_workspace))
         .with_state(state)
 }
 
@@ -138,12 +150,64 @@ async fn list_devices(State(state): State<ApiState>, _auth: RequireAuth) -> Json
     Json(devices)
 }
 
-async fn get_workspace(State(state): State<ApiState>, _auth: RequireAuth) -> Json<WorkspaceDto> {
-    Json(WorkspaceDto {
-        workspace_id: state.workspace.workspace_id.clone(),
-        // Never expose the actual token/private key — just whether a
-        // non-default one has been configured via env vars.
-        enrollment_token_configured: state.workspace.enrollment_token != "dev-enrollment-token",
-        device_count: state.registry.count(),
-    })
+fn workspace_dto(w: crate::workspace::Workspace, registry: &Registry) -> WorkspaceDto {
+    let device_count = registry.list().into_iter().filter(|d| d.cert.workspace_id == w.id).count();
+    WorkspaceDto {
+        id: w.id,
+        name: w.name,
+        created_at_unix: w.created_at_unix,
+        device_count,
+    }
+}
+
+async fn list_workspaces(State(state): State<ApiState>, _auth: RequireAuth) -> Json<Vec<WorkspaceDto>> {
+    let workspaces = state
+        .workspaces
+        .list()
+        .into_iter()
+        .map(|w| workspace_dto(w, &state.registry))
+        .collect();
+    Json(workspaces)
+}
+
+async fn create_workspace(
+    State(state): State<ApiState>,
+    _auth: RequireAuth,
+    Json(body): Json<CreateWorkspaceRequest>,
+) -> Result<Json<WorkspaceDto>, (StatusCode, &'static str)> {
+    if body.name.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "workspace name is required"));
+    }
+    let workspace = state.workspaces.create(body.name);
+    Ok(Json(workspace_dto(workspace, &state.registry)))
+}
+
+async fn rename_workspace(
+    State(state): State<ApiState>,
+    _auth: RequireAuth,
+    Path(id): Path<String>,
+    Json(body): Json<RenameWorkspaceRequest>,
+) -> Result<StatusCode, (StatusCode, &'static str)> {
+    if body.name.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "workspace name is required"));
+    }
+    if state.workspaces.rename(&id, body.name) {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "workspace not found"))
+    }
+}
+
+async fn delete_workspace(
+    State(state): State<ApiState>,
+    _auth: RequireAuth,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, &'static str)> {
+    if state.workspaces.delete(&id) {
+        // Immediate revocation cascade (README Section 10, decision 4).
+        state.registry.remove_by_workspace(&id);
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "workspace not found"))
+    }
 }

@@ -18,9 +18,10 @@ export interface Device {
   findings: Finding[];
 }
 
-export interface WorkspaceInfo {
-  workspace_id: string;
-  enrollment_token_configured: boolean;
+export interface Workspace {
+  id: string;
+  name: string;
+  created_at_unix: number;
   device_count: number;
 }
 
@@ -32,40 +33,45 @@ export interface Session {
   token: string;
 }
 
-async function getJson<T>(path: string): Promise<T> {
+// Matches the asset name published by .github/workflows/release-client.yml.
+export const CLIENT_INSTALLER_URL =
+  "https://github.com/bmrepository/nano-stack-7/releases/latest/download/nano-stack-7-client-installer.msi";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const res = await fetch(path, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    ...init,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...init?.headers,
+    },
   });
   if (res.status === 401) {
     clearToken();
     throw new Error("unauthorized");
   }
   if (!res.ok) {
-    throw new Error(`${path} returned ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `${path} returned ${res.status}`);
+  }
+  if (res.status === 204) {
+    return undefined as T;
   }
   return res.json() as Promise<T>;
 }
 
 export const api = {
-  devices: () => getJson<Device[]>("/api/devices"),
-  workspace: () => getJson<WorkspaceInfo>("/api/workspace"),
-  authStatus: () => getJson<AuthStatus>("/api/auth/status"),
+  devices: () => request<Device[]>("/api/devices"),
+  workspaces: () => request<Workspace[]>("/api/workspaces"),
+  createWorkspace: (name: string) =>
+    request<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify({ name }) }),
+  renameWorkspace: (id: string, name: string) =>
+    request<void>(`/api/workspaces/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteWorkspace: (id: string) => request<void>(`/api/workspaces/${id}`, { method: "DELETE" }),
+  authStatus: () => request<AuthStatus>("/api/auth/status"),
   setup: (username: string, password: string) =>
-    postJson<Session>("/api/auth/setup", { username, password }),
+    request<Session>("/api/auth/setup", { method: "POST", body: JSON.stringify({ username, password }) }),
   login: (username: string, password: string) =>
-    postJson<Session>("/api/auth/login", { username, password }),
+    request<Session>("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
 };

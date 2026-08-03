@@ -4,7 +4,7 @@ import Dashboard from "./pages/Dashboard";
 import Devices from "./pages/Devices";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
-import Workspace from "./pages/Workspace";
+import Workspaces from "./pages/Workspaces";
 import { api } from "./api";
 import { clearToken, getToken } from "./auth";
 
@@ -26,7 +26,7 @@ export default function App() {
       }
       // Confirm the stored token is still valid (e.g. survives a page
       // reload, but not a server restart, since sessions are in-memory).
-      await api.workspace();
+      await api.workspaces();
       setGate("authenticated");
     } catch {
       setGate("login");
@@ -60,8 +60,8 @@ export default function App() {
           <NavLink to="/devices" className={({ isActive }) => (isActive ? "active" : "")}>
             Devices
           </NavLink>
-          <NavLink to="/workspace" className={({ isActive }) => (isActive ? "active" : "")}>
-            Workspace
+          <NavLink to="/workspaces" className={({ isActive }) => (isActive ? "active" : "")}>
+            Workspaces
           </NavLink>
           <span className="nav-disabled" title="Phase 3">
             Plugins
@@ -79,7 +79,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/devices" element={<Devices />} />
-          <Route path="/workspace" element={<Workspace />} />
+          <Route path="/workspaces" element={<Workspaces />} />
         </Routes>
       </main>
     </div>

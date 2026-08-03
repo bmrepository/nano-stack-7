@@ -3,7 +3,7 @@ import { useApiData } from "../hooks";
 
 export default function Dashboard() {
   const { data: devices, error: devicesError, loading: devicesLoading } = useApiData(api.devices);
-  const { data: workspace, error: workspaceError } = useApiData(api.workspace);
+  const { data: workspaces, error: workspacesError } = useApiData(api.workspaces);
 
   const findingCount = devices?.reduce((sum, d) => sum + d.findings.length, 0) ?? 0;
   const devicesWithFindings = devices?.filter((d) => d.findings.length > 0).length ?? 0;
@@ -11,11 +11,11 @@ export default function Dashboard() {
   return (
     <div>
       <h1>Dashboard</h1>
-      <p className="subtitle">Phase 1 PoC — single-workspace overview.</p>
+      <p className="subtitle">Phase 1 PoC — overview across all workspaces.</p>
 
-      {(devicesError || workspaceError) && (
+      {(devicesError || workspacesError) && (
         <div className="banner banner-error">
-          Couldn't reach the server API ({devicesError ?? workspaceError}). Is the stack running?
+          Couldn't reach the server API ({devicesError ?? workspacesError}). Is the stack running?
         </div>
       )}
 
@@ -25,8 +25,8 @@ export default function Dashboard() {
           <div className="card-label">Enrolled devices</div>
         </div>
         <div className="card">
-          <div className="card-value">{workspace?.workspace_id ?? "—"}</div>
-          <div className="card-label">Workspace</div>
+          <div className="card-value">{workspaces?.length ?? 0}</div>
+          <div className="card-label">Workspaces</div>
         </div>
         <div className="card">
           <div className="card-value">{findingCount}</div>

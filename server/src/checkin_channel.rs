@@ -1,5 +1,5 @@
 use crate::registry::Registry;
-use crate::workspace::WorkspaceConfig;
+use crate::workspace::ServerIdentity;
 use shared_proto::{cert, noise, CheckInResponse, DeviceInventory};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -8,34 +8,33 @@ use tokio::net::{TcpListener, TcpStream};
 /// Runs the ongoing device check-in channel — separate from both the Axum
 /// admin API and the Noise_XX enrollment channel, since it speaks a
 /// different Noise pattern (IK, not XX).
-pub async fn run(workspace: Arc<WorkspaceConfig>, registry: Arc<Registry>, addr: &str) -> anyhow::Result<()> {
+pub async fn run(identity: Arc<ServerIdentity>, registry: Arc<Registry>, addr: &str) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     tracing::info!("check-in channel listening on {}", listener.local_addr()?);
 
     loop {
         let (stream, peer) = listener.accept().await?;
-        let workspace = workspace.clone();
+        let identity = identity.clone();
         let registry = registry.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_checkin(stream, &workspace, &registry).await {
+            if let Err(e) = handle_checkin(stream, &identity, &registry).await {
                 tracing::warn!(%peer, error = %e, "check-in connection failed");
             }
         });
     }
 }
 
-async fn handle_checkin(mut stream: TcpStream, workspace: &WorkspaceConfig, registry: &Registry) -> anyhow::Result<()> {
-    let (mut transport, device_public_key) =
-        noise::handshake_ik_responder(&mut stream, &workspace.private_key).await?;
+async fn handle_checkin(mut stream: TcpStream, identity: &ServerIdentity, registry: &Registry) -> anyhow::Result<()> {
+    let (mut transport, device_public_key) = noise::handshake_ik_responder(&mut stream, &identity.private_key).await?;
 
     // Noise_IK proves the initiator controls this key, but that alone isn't
     // enough — it must also be a key we actually issued a certificate for,
-    // and that certificate must still verify against the workspace key.
+    // and that certificate must still verify against the server's identity.
     let existing_cert = registry
         .get_cert(&device_public_key)
         .ok_or_else(|| anyhow::anyhow!("check-in from a device with no known certificate"))?;
 
-    if !cert::verify_certificate(&workspace.private_key, &existing_cert) {
+    if !cert::verify_certificate(&identity.private_key, &existing_cert) {
         anyhow::bail!("check-in from device {} failed certificate verification", existing_cert.device_id);
     }
 

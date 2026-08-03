@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export function useApiData<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshIndex, setRefreshIndex] = useState(0);
+
+  const refetch = useCallback(() => setRefreshIndex((i) => i + 1), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,9 +30,9 @@ export function useApiData<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, refreshIndex]);
 
-  return { data, error, loading };
+  return { data, error, loading, refetch };
 }
 
 export function formatUnixTime(unix: number | null): string {

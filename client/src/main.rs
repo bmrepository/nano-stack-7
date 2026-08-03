@@ -28,8 +28,12 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn enroll(server_addr: &str, identity_key: &[u8]) -> anyhow::Result<()> {
-    let enrollment_token = std::env::var("WORKSPACE_ENROLLMENT_TOKEN")
-        .unwrap_or_else(|_| "dev-enrollment-token".to_string());
+    // The workspace ID doubles as the enrollment credential (README
+    // Section 4.2) — there's no meaningful default to fall back to, since
+    // it doesn't exist until an admin creates the workspace in the Admin
+    // Console. Get it from Devices → your workspace → copy ID.
+    let workspace_id = std::env::var("WORKSPACE_ID")
+        .map_err(|_| anyhow::anyhow!("WORKSPACE_ID must be set — copy it from the workspace's page in the Admin Console"))?;
 
     tracing::info!(server_addr, "connecting for enrollment");
     let mut stream = TcpStream::connect(server_addr).await?;
@@ -38,7 +42,7 @@ async fn enroll(server_addr: &str, identity_key: &[u8]) -> anyhow::Result<()> {
     tracing::info!("Noise_XX handshake complete");
 
     let request = EnrollmentRequest {
-        workspace_enrollment_token: enrollment_token,
+        workspace_id,
         hostname: hostname::get()?.to_string_lossy().into_owned(),
         os_version: std::env::consts::OS.to_string(),
     };
