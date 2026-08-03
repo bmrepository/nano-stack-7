@@ -1,3 +1,16 @@
+# PRODUCTION stack. This is the file Portainer tracks on `main` (LAN server
+# at 192.168.0.101) — see README Section 13.
+#
+# It pulls a prebuilt server image from GHCR rather than building from
+# source, so a redeploy is a fast image pull instead of a full Rust + npm
+# build on the production host, and prod runs the exact artifact CI built and
+# tested. Publish a new image with .github/workflows/publish-server-image.yml
+# (automatic on every push to `main`).
+#
+# For local development, don't edit this file — layer the dev override on
+# top, which swaps the image for a local build:
+#   podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# or just use scripts/dev-stack.ps1, which does that for you.
 services:
   postgres:
     image: postgres:16
@@ -26,9 +39,8 @@ services:
       retries: 10
 
   server:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.server
+    image: ghcr.io/bmrepository/nano-stack-7-server:latest
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "8080:8080" # Admin API + React Admin Console

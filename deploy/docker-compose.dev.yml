@@ -1,0 +1,17 @@
+# DEV override — layered on top of docker-compose.yml, never used alone:
+#   podman-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# (scripts/dev-stack.ps1 wraps this, including the -p project name that keeps
+# dev containers and volumes namespaced separately from anything else.)
+#
+# The only real difference from prod: build the server image from the local
+# working tree instead of pulling the published one from GHCR, so uncommitted
+# changes can be tested before they ever reach `main`.
+services:
+  server:
+    # Overrides the GHCR image in the base file. `image:` is still set so the
+    # locally built image gets a predictable name rather than a random one.
+    image: nano-stack-7-server:dev
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server

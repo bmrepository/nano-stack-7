@@ -437,3 +437,37 @@ Split into what lives on the dedicated Windows 11 dev/test box (Section 13.3) ve
 | `cargo-watch` | Auto-rebuild/rerun during server iteration. |
 
 I (the agent) reach the WSL2 side directly via `wsl.exe -d <distro> -- <command>` from my shell tools — no SSH or extra setup required on top of WSL2 itself. A `.devcontainer/` config pinning these versions is planned so the environment is reproducible rather than hand-installed (see Section 11.1 milestones for when this gets scaffolded).
+
+### 13.5 Dev and Prod Environments (Confirmed 2026-08-03)
+
+Two complete environments, so a change can be exercised end to end before it reaches production. **Dev and prod never share state** — separate databases, separate server identities, separate device fleets.
+
+| | **DEV** | **PROD** |
+|---|---|---|
+| Server stack | WSL2 + rootless Podman on the dev PC (`whitesnow`) | Docker + Portainer on the LAN server (`192.168.0.101`) |
+| Server image | Built from the local working tree (`deploy/docker-compose.dev.yml` override) | Pulled from GHCR — `ghcr.io/bmrepository/nano-stack-7-server:latest` |
+| Admin Console | `http://localhost:8080` (also on the dev PC's tailnet IP) | `http://192.168.0.101:8080` |
+| Client target | `lab1` — built from source over SSH, run straight from `target/debug` | The dev PC (`whitesnow`) — installs the released `.msi`, validating the real artifact end users get |
+| Tracked branch | Whatever is checked out locally, including uncommitted work | `main` |
+
+Note the deliberate inversion on the client side: **dev** iterates fast on `lab1` (which has the MSVC toolchain) without ever building an installer, while **prod validation** installs the actual signed-off MSI on the dev PC — so the thing being tested is the artifact a real user receives, not a `cargo build` output.
+
+#### Scripts
+
+| Script | Purpose |
+|---|---|
+| `scripts/setup-dev-networking.ps1` | **One-time, run as admin.** Enables WSL2 mirrored networking + firewall rules so `lab1` can reach the dev stack. Without this, WSL2's NAT networking makes the dev server reachable only from the dev PC's own localhost. |
+| `scripts/dev-stack.ps1 <up\|down\|reset\|rebuild\|logs\|status>` | Manages the dev server stack. `rebuild` is the inner-loop command after changing server or console code; `status` prints the address to enter in the client's setup dialog. |
+| `scripts/dev-client.ps1 -WorkspaceId <id>` | Syncs, builds and runs the client on `lab1` against the dev stack. `-NoRun` builds only (then launch from lab1's own console to see the tray icon/dialogs — SSH sessions can't display UI); `-FreshEnrollment` clears saved client state first. |
+| `dunow.ps1 -Message "..."` | Commits, pushes `dev`, merges to `main`, pushes `main` — the promotion step. |
+
+#### Release flow
+
+1. **Develop**: `.\scripts\dev-stack.ps1 rebuild`, then `.\scripts\dev-client.ps1 -WorkspaceId <id>`. Iterate entirely against dev; nothing touches prod.
+2. **Promote**: `.\dunow.ps1 -Message "..."` — merges `dev` into `main` and pushes.
+3. **CI builds the prod image**: pushing `main` triggers `.github/workflows/publish-server-image.yml`, publishing `ghcr.io/bmrepository/nano-stack-7-server:latest` (plus an immutable `:<short-sha>` tag for rollbacks).
+4. **Deploy prod**: in Portainer, **pull and redeploy** the stack. It pulls the freshly published image rather than rebuilding from source, so a deploy is fast and runs the exact artifact CI produced. Data survives — see the persistence notes in Section 11.1.1.
+5. **Release the client installer**: push a `v*` tag to trigger `.github/workflows/release-client.yml`, which builds the MSI and publishes it as a GitHub Release.
+6. **Validate prod client**: install that MSI on the dev PC, point it at `192.168.0.101`, and confirm enrollment against production.
+
+**Rollback**: prod's compose file references `:latest`, so to pin an older build, change the `server` image tag to a specific `:<short-sha>` and redeploy.
