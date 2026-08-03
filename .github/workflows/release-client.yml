@@ -22,7 +22,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: arduino/setup-protoc@v3
+      # Chocolatey is preinstalled on windows-latest and doesn't depend on
+      # any GitHub API call — arduino/setup-protoc@v3 failed here on the
+      # first real run, most likely GitHub's well-known unauthenticated
+      # rate-limit gotcha with that action (it queries GitHub's API for
+      # protobuf releases without a repo-token by default).
+      - name: Install protoc
+        run: choco install protoc -y
 
       - uses: dtolnay/rust-toolchain@stable
 

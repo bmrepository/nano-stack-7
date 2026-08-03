@@ -4,6 +4,19 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Release workflow first-run failure diagnosed and fixed
+
+- User pushed `dev`, merged/pushed `main`, updated the Portainer stack, and pushed tag `v0.1.0` to trigger `.github/workflows/release-client.yml`. No installer appeared at the expected release URL.
+- Diagnosed via the public GitHub API (no `gh` CLI available in this environment; used unauthenticated `curl` against `api.github.com` since the repo is public):
+  ```bash
+  curl -s "https://api.github.com/repos/bmrepository/nano-stack-7/actions/runs?per_page=5"
+  curl -s "https://api.github.com/repos/bmrepository/nano-stack-7/actions/runs/30774777771/jobs"
+  ```
+  Found: run `30774777771` (`build-installer` job) completed in ~10 seconds with `conclusion: failure` at the `Run arduino/setup-protoc@v3` step specifically — failed instantly, before even attempting a download, with every subsequent step (`dtolnay/rust-toolchain`, `Install cargo-wix`, `Build MSI installer`, `Publish GitHub Release`) showing `skipped`. Could not fetch the actual log text (`GET .../jobs/{id}/logs` → `403 Must have admin rights to Repository` — log downloads require repo-write auth even for public repos), so this diagnosis is by elimination/step-timing, not a confirmed error message.
+- Most likely cause: `arduino/setup-protoc@v3`'s documented behavior of querying GitHub's API for protobuf release metadata, which hits unauthenticated per-IP rate limits on GitHub's shared runner pool without a `repo-token` input — a known gotcha with that action, consistent with an instant (not a timeout-style) failure.
+- Fixed by replacing that step in `.github/workflows/release-client.yml` with `choco install protoc -y` — Chocolatey is preinstalled on `windows-latest` and makes no GitHub API calls at all, avoiding the failure mode entirely rather than just patching around it (e.g. by adding `repo-token`).
+- Not yet re-verified — the workflow also has a `workflow_dispatch` trigger, so once this fix is pushed, it can be re-run manually from the Actions tab without needing a new tag.
+
 ### Multi-workspace CRUD + custom tray icons + client installer pipeline
 
 - **Custom tray icons**: generated `client/assets/ns7-icon-light.ico`/`ns7-icon-dark.ico` (32×32, "N7" glyph matching the Admin Console brand mark) via a `System.Drawing`-based PowerShell script run directly on the dev PC (`Bitmap` → `GetHicon()` → `Icon.Save()`), verified both load correctly (`New-Object System.Drawing.Icon(...)`, confirmed 32×32). Updated `client/src/bin/tray-helper.rs` to pick between them at runtime based on `HKCU:\...\Personalize\SystemUsesLightTheme`, falling back to `SystemIcons.Application` if the files are missing. Fixed a logic bug caught before shipping: the light/dark selection was initially inverted.
