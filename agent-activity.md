@@ -4,6 +4,20 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-03
 
+### Reworked NS7Conf defaults around device performance
+
+User reviewed the plugin schema and asked for defaults optimised so the agent always prioritises device performance: relaxed scan frequency, work preferred outside business/active hours or when the machine is idle or the user away, and the same relaxation applied to deadlines and deferrals.
+
+- **Reframed the problem before changing numbers.** The expensive part of patch management is the scanning, downloading, installing and restarting - not the decision to patch. So the bulk of the work went into controlling *when* work happens rather than simply inflating delays.
+- **Added `[performance]`**, which gates all plugin work (scan, download, install, remediate): `scan_only_when_idle` (default true), `idle_threshold_minutes` 10, `max_cpu_percent_to_start` 25, `yield_when_user_returns`, `process_priority = "below_normal"`, `io_priority = "low"`, `defer_on_battery` (with an optional charge-level override), `defer_on_metered_connection`, `max_concurrent_plugin_scans = 1` (serial is slower but gentler), and `max_postpone_days = 7` so a never-idle machine still gets scanned eventually. Postponed work waits rather than being skipped.
+- **Added `[maintenance_window]`** (default 22:30-05:30 daily, crossing midnight) for the heavy work, with `catch_up_if_missed` and `wake_to_run = false` - waking a laptop in a bag to install updates is rarely right.
+- **Split the two cadences**, which had been conflated: `scan_interval_secs` (expensive local evaluation) relaxed 1800 -> 21600 (6h), while `checkin_interval_secs` (a cheap network round-trip, enrolled only) sits at 3600. Also added `startup_scan_delay_minutes = 15`, since login is the worst moment to add work.
+- **Relaxed deadlines/deferrals**: quality updates 7/14 -> 14/21, M365 7 -> 14, Win32 7 -> 14, store apps delay 0 -> 3, grace periods 2 -> 3, restart countdown 60 -> 120 minutes, max postponements 3 -> 5.
+- **Deliberately did NOT relax `windows_security_updates.deferral_days`** (still 0), and said so explicitly in the file. Deferring the *availability* of a security fix buys no performance - the install is already confined to idle time and the maintenance window - while costing real exposure. What was relaxed there is the enforcement deadline (7 -> 10), not availability. Called out in the "Tuning the defaults" section as the one setting to leave alone.
+- **Other performance-aware touches**: bandwidth split into `max_bandwidth_percent_active` (20) vs `_idle` (80); DO cache halved to 10 GB since disk on a personal device isn't free; notifications defaulted to `failures_only` with `show_available = false` (routine patching isn't news); `restart.block_restart_if_running` so a restart can't kill a Teams call or an IDE; `store_apps.max_updates_per_window = 10` so one session can't become an hour of churn; Win32 `retry_delay_minutes = 60` instead of hammering; and a note that script-based Win32 detection spawns PowerShell on every scan, so registry/MSI detection is cheaper.
+- Added a "Tuning the defaults" section with concrete more-responsive and less-intrusive presets, so the trade-off is adjustable without re-deriving it.
+- Validated the file parses (`tomllib`) and spot-checked the resulting values.
+
 ### Architecture inversion: standalone-first, plus repo split and plugin config schema
 
 User changed the product's centre of gravity: NS7 is now primarily a **standalone application** with all features and plugins working with no server, configuration living 100% in the TOML, and the Admin Console demoted to an optional orchestration layer.

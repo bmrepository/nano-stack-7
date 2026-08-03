@@ -11,6 +11,31 @@
 # Connecting to an NS7 Server Admin Console is OPTIONAL and only changes WHO
 # gets to edit parts of this file - never where the configuration lives.
 #
+# -----------------------------------------------------------------------------
+# DESIGN PRINCIPLE: THE DEVICE BELONGS TO THE USER
+# -----------------------------------------------------------------------------
+# Every default here is chosen to keep the machine fast and uninterrupted while
+# the person is using it. The agent should be invisible during the working day.
+#
+# The important insight is that the expensive part of patch management is not
+# *deciding* to patch - it is the scanning, downloading, installing and
+# restarting. So the defaults control WHEN that work happens rather than simply
+# delaying patches:
+#
+#   * Scans are infrequent and only run when the machine is genuinely idle.
+#   * Heavy work waits for the maintenance window, off active hours.
+#   * Nothing runs on battery or a metered connection by default.
+#   * The agent runs at below-normal CPU and background I/O priority, so it
+#     yields to anything the user is doing.
+#   * Deadlines are generous, and enforcement (restarts) is confined to the
+#     maintenance window.
+#
+# One deliberate exception: security updates are still *offered* immediately
+# (`deferral_days = 0`). Delaying the availability of a security fix trades
+# real risk for no performance gain, because the work itself is already
+# deferred to idle time. What is relaxed for security updates is the
+# *enforcement* deadline, not the availability.
+#
 # CONFIG AUTHORITY
 #   Standalone (StandaloneMode = true): this file is yours entirely.
 #   Enrolled  (StandaloneMode = false): the server owns exactly the sections
@@ -26,9 +51,7 @@
 #   This schema is adapted from an Intune/Autopatch-style model. Fleet-level
 #   ideas there (Entra group targeting, Conditional Access, tenant-wide ring
 #   membership) have no meaning on a single standalone device, so they are not
-#   reproduced. Ring membership survives as one local value - `device.ring` -
-#   which a standalone user sets themselves and an enrolled device receives
-#   from the server.
+#   reproduced. Ring membership survives as one local value - `device.ring`.
 # =============================================================================
 
 
@@ -42,21 +65,133 @@ StandaloneMode = true
 # [agent] - the daemon itself
 # -----------------------------------------------------------------------------
 [agent]
-# How often plugins evaluate the device. Applies in standalone too, where it
-# is purely local scanning with no network involved.
-# Values: 300-86400. Default: 1800 (30 minutes).
-scan_interval_secs = 1800
+# How often plugins evaluate the device. This is the expensive operation -
+# enumerating installed software and querying update catalogues - so it is
+# deliberately infrequent. Combined with [performance] gating, a scan normally
+# lands while the machine is idle and costs the user nothing.
+# Values: 3600-86400. Default: 21600 (6 hours).
+# Lower only if you need faster detection and accept the cost; 3600 (hourly)
+# is the practical floor before scanning becomes noticeable.
+scan_interval_secs = 21600
+
+# Only meaningful when enrolled. A check-in is a small network round-trip, not
+# a scan, so it can be far more frequent than scanning without costing
+# anything measurable. This is what keeps the Admin Console's view current.
+# Values: 300-86400. Default: 3600 (1 hour).
+checkin_interval_secs = 3600
+
+# Run the first scan this long after login rather than immediately. Boot and
+# login are the worst possible moment to add work - the machine is already
+# contending for CPU and disk.
+# Values: 0-60. Default: 15.
+startup_scan_delay_minutes = 15
 
 # Values: "error" | "warn" | "info" | "debug" | "trace". Default: "info".
+# "debug" and "trace" write substantially more to disk; avoid leaving them on.
 log_level = "info"
 
 # Show the tray icon in the notification area. Default: true.
 tray_icon = true
 
 # Check GitHub for newer agent releases. Values: "never" | "notify" | "auto".
-# "auto" downloads and installs without asking; "notify" only surfaces it in
-# the Updates page. Default: "notify".
+# Default: "notify" - the agent should not replace itself mid-workday.
+# With "auto", the install still respects [maintenance_window].
 self_update = "notify"
+
+
+# -----------------------------------------------------------------------------
+# [performance] - the guard rails that keep the agent out of the way
+# -----------------------------------------------------------------------------
+# These gate ALL plugin work: scanning, downloading, installing, remediating.
+# When a gate is not satisfied, the work is postponed to the next opportunity
+# rather than skipped - nothing is lost, it simply waits for a better moment.
+[performance]
+# Only scan when the machine is idle. This is the single most effective
+# setting here: it means a scan essentially never competes with the user.
+# Default: true.
+scan_only_when_idle = true
+
+# How long without keyboard/mouse input before the device counts as idle.
+# Values: 1-120. Default: 10.
+idle_threshold_minutes = 10
+
+# Do not start work if sustained CPU is already above this. Prevents the agent
+# piling on during a build, a render, or a video call.
+# Values: 10-100. Default: 25.
+max_cpu_percent_to_start = 25
+
+# Abort in-progress work if the user returns and CPU demand climbs. The work
+# resumes at the next opportunity.
+# Default: true.
+yield_when_user_returns = true
+
+# Windows process priority class for the agent and anything it spawns.
+# Values: "idle" | "below_normal" | "normal".
+# Default: "below_normal" - the agent should always lose a fight for CPU.
+process_priority = "below_normal"
+
+# Background I/O priority, so disk-heavy scanning does not starve foreground
+# applications. Values: "low" | "normal". Default: "low".
+io_priority = "low"
+
+# Never run on battery. Patch work is a meaningful drain, and a laptop on
+# battery is almost always in active use.
+# Default: true.
+defer_on_battery = true
+# Exception: allow work on battery above this charge level, for machines that
+# are rarely plugged in. Values: 0-100 (0 disables the exception).
+# Default: 0.
+battery_override_above_percent = 0
+
+# Never download over a connection Windows reports as metered (tethered
+# phone, mobile broadband, capped hotel wifi).
+# Default: true.
+defer_on_metered_connection = true
+
+# Run one plugin at a time rather than in parallel. Serial execution is slower
+# in wall-clock terms but far gentler on a machine someone is using.
+# Values: 1-5. Default: 1.
+max_concurrent_plugin_scans = 1
+
+# Prefer to schedule scans outside [active_hours] even when the machine is
+# idle during the day. Default: true.
+prefer_outside_active_hours = true
+
+# Upper bound on how long postponement may continue before the agent runs
+# anyway. Without this, a machine that is never idle would never be scanned.
+# Values: 1-30. Default: 7.
+max_postpone_days = 7
+
+
+# -----------------------------------------------------------------------------
+# [maintenance_window] - when heavy work is allowed
+# -----------------------------------------------------------------------------
+# Downloads, installs, remediation and restarts happen here. Scanning is
+# lighter and is governed by [performance] instead, so detection still happens
+# between windows.
+[maintenance_window]
+# Default: true. With false, work may run at any time the [performance] gates
+# allow, which is more responsive but less predictable for the user.
+enabled = true
+
+# Values: "daily" | "weekdays" | "weekends" | a list of day names.
+# Example: ["tuesday", "thursday", "saturday"]. Default: "daily".
+days = "daily"
+
+# The window itself. Defaults sit outside the default active hours
+# (06:00-22:00) and cross midnight, which is normal and supported.
+# Default: "22:30" to "05:30".
+start = "22:30"
+end = "05:30"
+
+# If the machine is asleep or off for the whole window, run the work at the
+# next opportunity that satisfies [performance] instead of waiting a full day.
+# Default: true. Set false for strict change-control environments.
+catch_up_if_missed = true
+
+# Wake the machine from sleep to use the window. Default: false - waking a
+# laptop in someone's bag to install updates is rarely the right call.
+wake_to_run = false
 
 
 # -----------------------------------------------------------------------------
@@ -86,14 +221,15 @@ label = ""
 # -----------------------------------------------------------------------------
 # [active_hours] - when the device must not be disrupted
 # -----------------------------------------------------------------------------
-# Applies to every plugin: no restart, and no interactive install, inside
-# these hours.
+# No restart and no interactive install inside these hours, for any plugin.
 [active_hours]
-# Values: "manual" | "automatic". "automatic" learns from usage patterns.
+# Values: "manual" | "automatic". "automatic" learns from usage patterns and
+# suits people with irregular schedules.
 # Default: "manual".
 mode = "manual"
 
-# Used when mode = "manual". Default: "06:00" to "22:00".
+# Used when mode = "manual". Default: "06:00" to "22:00" - deliberately wide,
+# because the cost of guessing too narrow is interrupting someone at work.
 # Windows caps the active-hours window at 18 hours.
 start = "06:00"
 end = "22:00"
@@ -103,25 +239,28 @@ end = "22:00"
 # [notifications] - what the user sees
 # -----------------------------------------------------------------------------
 [notifications]
-# Values: "all" | "failures_only" | "none". Default: "all".
-level = "all"
+# Values: "all" | "failures_only" | "none". Default: "failures_only" -
+# routine background patching is not news; a failure is.
+level = "failures_only"
 
-# Toast when an update is available. Default: true.
-show_available = true
+# Toast when an update becomes available. Default: false - with work deferred
+# to the maintenance window anyway, an availability toast is just noise.
+show_available = false
 
-# Warn before a restart. Default: true.
+# Warn before a restart. Default: true - this one always matters.
 show_restart_warning = true
 
 # Reminder cadence before a deadline. Values: 15 | 30 | 60. Default: 60.
 reminder_interval_minutes = 60
 
-# Days before a deadline at which to start warning. Default: 7.
-deadline_warning_days = 7
+# Days before a deadline at which to start warning. Default: 3.
+deadline_warning_days = 3
 
 
 # -----------------------------------------------------------------------------
 # [restart] - shared restart policy
 # -----------------------------------------------------------------------------
+# The most disruptive thing the agent can do, so the defaults are cautious.
 # Individual plugins may override these.
 [restart]
 # Values: "automatic" | "user_controlled". Default: "user_controlled".
@@ -130,18 +269,27 @@ behavior = "user_controlled"
 # Only restart outside [active_hours]. Default: true.
 outside_active_hours_only = true
 
-# Preferred restart slot when a restart is pending.
+# Only restart inside [maintenance_window]. Default: true.
+inside_maintenance_window_only = true
+
+# Preferred restart slot when one is pending.
 # Values: "any" | "monday" ... "sunday". Default: "sunday".
 scheduled_day = "sunday"
-# Values: "00:00"-"23:59". Default: "02:00".
-scheduled_time = "02:00"
+# Values: "00:00"-"23:59". Default: "03:00" (inside the default window).
+scheduled_time = "03:00"
 
 # Warning countdown before a forced restart.
-# Values: 5-1440. Default: 60.
-countdown_minutes = 60
+# Values: 5-1440. Default: 120 - two hours is enough to save work and step
+# away, without being so long the warning is forgotten.
+countdown_minutes = 120
 
-# How many times the user may postpone. Values: 0-5. Default: 3.
-max_postponements = 3
+# How many times the user may postpone. Values: 0-5. Default: 5.
+max_postponements = 5
+
+# Never restart while these are running; wait for the next window instead.
+# Example: ["Teams.exe", "Zoom.exe", "devenv.exe", "ssms.exe"]
+# Default: [] - add anything whose sudden death would lose work.
+block_restart_if_running = []
 
 
 # -----------------------------------------------------------------------------
@@ -149,15 +297,21 @@ max_postponements = 3
 # -----------------------------------------------------------------------------
 [delivery_optimization]
 # Values: "http_only" | "lan_peering" | "internet_peering" | "lan_and_internet".
-# Default: "lan_peering".
+# Default: "lan_peering" - peers on the local network, avoiding repeated WAN
+# downloads, without exposing the device to internet peering.
 download_mode = "lan_peering"
 
-# Peer cache size in GB. Values: 1-100. Default: 20.
-cache_size_gb = 20
+# Peer cache size in GB. Values: 1-100. Default: 10 - halved from a typical
+# enterprise value because disk on a personal device is not free.
+cache_size_gb = 10
 
-# Cap on download bandwidth, as a percentage of what's available.
-# Values: 10-100. Default: 50.
-max_bandwidth_percent = 50
+# Bandwidth cap during [active_hours]. Kept low so a background download never
+# competes with a video call. Values: 5-100. Default: 20.
+max_bandwidth_percent_active = 20
+
+# Bandwidth cap outside active hours / inside the maintenance window, where
+# there is nothing to compete with. Values: 10-100. Default: 80.
+max_bandwidth_percent_idle = 80
 
 
 # -----------------------------------------------------------------------------
@@ -206,7 +360,6 @@ id = ""
 # Every plugin shares two keys:
 #
 #   enabled  true | false
-#            Default varies per plugin; see each section.
 #
 #   consent  "auto"        act without asking (only for low blast radius)
 #            "ask"         prompt the user, act only on approval
@@ -215,8 +368,10 @@ id = ""
 #            Default: "ask". Section 1 of the README - the human stays in the
 #            loop - is why "ask" is the default rather than "auto".
 #
-# Consent behaves identically standalone and enrolled. The only difference is
-# whether the value came from this file or was pushed by the server.
+# All plugin work is subject to [performance] and [maintenance_window]. A
+# deadline below means "the point at which the agent stops waiting for an
+# ideal moment", not "the moment it interrupts you" - enforcement still
+# prefers the maintenance window.
 # =============================================================================
 
 
@@ -224,30 +379,38 @@ id = ""
 # 1. Microsoft Windows OS Security Updates Management
 # -----------------------------------------------------------------------------
 # Security-classified OS updates. Kept separate from quality updates because
-# they warrant a much shorter deadline.
+# they warrant a shorter deadline.
 [plugins.windows_security_updates]
 enabled = true
 consent = "ask"
 
-# Wait this long after Microsoft publishes before offering the update.
-# Values: 0-30. Default: 0 - security updates should not be deferred.
+# Deliberately 0 while everything else here is relaxed. Deferring the
+# *availability* of a security fix buys no performance - the install is
+# already confined to idle time and the maintenance window - and costs real
+# exposure. Raise this only with a specific reason.
+# Values: 0-30. Default: 0.
 deferral_days = 0
 
-# Install becomes mandatory this many days after the update is offered.
-# Values: 0-30. Default: 7. Typical enterprise: 3-7 for critical.
-deadline_days = 7
+# When the agent stops waiting for a convenient moment. Relaxed from a typical
+# enterprise 7 to give more chances for a genuinely idle maintenance window
+# before enforcement.
+# Values: 0-30. Default: 10.
+deadline_days = 10
 
-# Extra time after the deadline before enforcement, so a user who has been
-# offline is not restarted the instant they reconnect.
-# Values: 0-7. Default: 2.
-grace_period_days = 2
+# Extra time after the deadline before a forced restart, so someone returning
+# from leave is not restarted the moment they reconnect.
+# Values: 0-7. Default: 3.
+grace_period_days = 3
 
-# Restart automatically once deadline + grace has elapsed. Default: true.
+# Restart automatically once deadline + grace has elapsed. Still bound by
+# [restart], so it lands in the maintenance window. Default: true.
 auto_reboot_after_deadline = true
 
-# Which severities this plugin acts on. Anything excluded is still reported.
+# Which severities this plugin acts on. Anything excluded is still reported,
+# so nothing is hidden - it just does not trigger work.
 # Values: any of "critical", "important", "moderate", "low".
-# Default: ["critical", "important"].
+# Default: ["critical", "important"] - moderate and low rarely justify the
+# install and restart cost.
 severity_filter = ["critical", "important"]
 
 # Include updates for other Microsoft products (not just the OS).
@@ -255,7 +418,6 @@ severity_filter = ["critical", "important"]
 include_microsoft_products = true
 
 # Values: "windows_update" | "wsus". Default: "windows_update".
-# "wsus" additionally requires wsus_server below.
 update_source = "windows_update"
 # Example: "http://wsus.corp.example.com:8530". Default: "".
 wsus_server = ""
@@ -270,31 +432,33 @@ paused_until = ""
 # -----------------------------------------------------------------------------
 # 2. Microsoft Windows OS Quality Updates Management
 # -----------------------------------------------------------------------------
-# Monthly cumulative (non-security) updates. Longer deferrals are normal here,
-# since these carry more regression risk and less urgency.
+# Monthly cumulative (non-security) updates. Longer deferrals are appropriate:
+# these carry more regression risk, less urgency, and are usually the largest
+# downloads.
 [plugins.windows_quality_updates]
 enabled = true
 consent = "ask"
 
-# Values: 0-30. Default: 7.
-deferral_days = 7
+# Also lets early adopters surface problems before this device takes them.
+# Values: 0-30. Default: 14.
+deferral_days = 14
 
-# Values: 0-30. Default: 14. Typical enterprise: 7-14.
-deadline_days = 14
+# Values: 0-30. Default: 21.
+deadline_days = 21
 
-# Values: 0-7. Default: 2.
-grace_period_days = 2
+# Values: 0-7. Default: 3.
+grace_period_days = 3
 
 # Default: true.
 auto_reboot_after_deadline = true
 
 # Install without individual approval once the deferral has elapsed.
-# Default: true. Set false to require an explicit approval per update.
+# Default: true. Set false to require explicit approval per update.
 automatic_approval = true
 
 # Include hardware driver updates delivered through Windows Update.
-# Default: false - drivers are the most common source of regressions, so they
-# are opt-in and, when enabled, default to notify-only.
+# Default: false - drivers are the most common source of regressions and of
+# post-update performance problems, so they are opt-in and notify-only.
 include_drivers = false
 # Values: "auto" | "ask" | "notify_only". Default: "notify_only".
 driver_consent = "notify_only"
@@ -319,11 +483,12 @@ paused_until = ""
 enabled = true
 consent = "ask"
 
-# Release channel. Slower channels trade features for stability.
+# Release channel. Slower channels trade features for stability, and update
+# less often - which is also less background work.
 # Values:
 #   "current"                  newest features, fastest cadence
 #   "monthly_enterprise"       monthly, predictable - recommended default
-#   "semi_annual"              twice yearly, most stable
+#   "semi_annual"              twice yearly, most stable, least churn
 #   "semi_annual_preview"      semi-annual, one cycle early
 #   "current_preview"          current channel, pre-release
 #   "beta"                     unsupported, test devices only
@@ -334,11 +499,11 @@ update_channel = "monthly_enterprise"
 # the channel. Default: "".
 target_version = ""
 
-# Values: 0-30. Default: 7.
-deadline_days = 7
+# Values: 0-30. Default: 14.
+deadline_days = 14
 
 # Keep the previous build available so a bad release can be rolled back.
-# Default: true.
+# Costs disk; worth it. Default: true.
 rollback_enabled = true
 
 # Suppress Office's own update prompts, so NS7 is the single voice.
@@ -346,7 +511,8 @@ rollback_enabled = true
 hide_update_notifications = true
 
 # Close Office apps automatically to apply an update once past the deadline.
-# Default: false - closing apps under someone mid-document is disruptive.
+# Default: false - closing apps under someone mid-document is exactly the kind
+# of interruption these defaults exist to avoid. NS7 waits for them to close.
 force_app_shutdown = false
 
 # Default: false.
@@ -358,12 +524,12 @@ paused_until = ""
 # 4. Microsoft Store Apps (WinGet)
 # -----------------------------------------------------------------------------
 # Public applications from the Store / WinGet catalog: browsers, readers,
-# utilities. These typically update safely and are the best candidate for
-# "auto" consent.
+# utilities. Low blast radius and no restarts, so this is the one plugin where
+# unattended updates are the sensible default.
 [plugins.store_apps]
 enabled = true
-# Low blast radius, so unattended updates are reasonable here.
-# Default: "auto".
+# Safe to run unattended - still gated by [performance] and the maintenance
+# window, so it happens while the machine is idle. Default: "auto".
 consent = "auto"
 
 # Where packages come from.
@@ -371,12 +537,11 @@ consent = "auto"
 update_source = "both"
 
 # Values: "system" | "user". Default: "system" - keeps apps consistent for
-# every account on the device.
+# every account and avoids re-running per user.
 installation_context = "system"
 
 # May the signed-in user update or remove managed apps themselves?
-# Values: "allowed" | "blocked". Default: "allowed" in standalone, typically
-# "blocked" when enrolled.
+# Values: "allowed" | "blocked". Default: "allowed" in standalone.
 user_update_control = "allowed"
 
 # Update everything found, or only `include` below.
@@ -388,8 +553,9 @@ update_all = true
 # Default: [].
 include = []
 
-# Never touched, even when update_all = true.
-# Example: ["Valve.Steam", "Mozilla.Firefox"]
+# Never touched, even when update_all = true. Worth listing anything whose
+# update is large, slow, or disruptive mid-session.
+# Example: ["Valve.Steam", "Docker.DockerDesktop"]
 # Default: [].
 exclude = []
 
@@ -399,14 +565,19 @@ exclude = []
 pinned = []
 
 # Delay after a new version appears before this device takes it. Stacks with
-# device.ring. Values: 0-90. Default: 0.
-delay_days = 0
+# device.ring. Values: 0-90. Default: 3 - lets obviously-broken releases be
+# pulled before this device spends bandwidth on them.
+delay_days = 3
+
+# Cap on how many app updates to install in a single window, so one session
+# cannot turn into an hour of churn. Values: 1-50. Default: 10.
+max_updates_per_window = 10
 
 # Per-application overrides. Anything omitted falls back to the values above.
 # [[plugins.store_apps.applications]]
-# id       = "Google.Chrome"
-# consent  = "auto"
-# delay_days = 3
+# id            = "Google.Chrome"
+# consent       = "auto"
+# delay_days    = 1
 # deadline_days = 7
 
 
@@ -415,7 +586,7 @@ delay_days = 0
 # -----------------------------------------------------------------------------
 # Line-of-business and packaged desktop applications: VPN clients, security
 # agents, ERP, in-house software. The most control and the most configuration,
-# because NS7 cannot infer install/detect semantics the way it can for WinGet.
+# because NS7 cannot infer install/detect semantics as it can for WinGet.
 [plugins.win32_apps]
 enabled = false
 consent = "ask"
@@ -429,15 +600,16 @@ installation_context = "system"
 architecture = "x64"
 
 # Values: "app_defined" | "force" | "suppress". Default: "suppress" -
-# an application installer should not decide to reboot the machine.
+# an application installer should not get to reboot the machine on its own.
 restart_behavior = "suppress"
 
-# Abandon an install that runs longer than this.
-# Values: 5-60. Default: 60.
+# Abandon an install that runs longer than this. Generous, because a slow
+# install at 03:00 costs nothing, whereas a retry loop does.
+# Values: 5-120. Default: 60.
 install_timeout_minutes = 60
 
-# Exit codes treated as success. 3010 and 1641 mean "succeeded, reboot
-# needed" and must not be read as failures.
+# Exit codes treated as success. 3010 and 1641 mean "succeeded, reboot needed"
+# and must not be read as failures.
 # Default: [0, 3010, 1641].
 success_return_codes = [0, 3010, 1641]
 # Exit codes worth retrying rather than failing outright. Default: [1618].
@@ -445,12 +617,16 @@ success_return_codes = [0, 3010, 1641]
 retry_return_codes = [1618]
 # Values: 0-5. Default: 2.
 max_retries = 2
+# Wait this long before retrying, rather than hammering immediately.
+# Values: 1-1440. Default: 60.
+retry_delay_minutes = 60
 
 # Values: "show_all" | "failures_only" | "hide_all". Default: "failures_only".
 user_notifications = "failures_only"
 
-# Values: 0-30. Default: 7. Security tooling typically uses 1-2.
-deadline_days = 7
+# Values: 0-30. Default: 14. Security tooling typically overrides this to 1-2
+# per application.
+deadline_days = 14
 
 # What to do when a required app is found missing, wrong-versioned or broken.
 # Values: any of "reinstall", "upgrade", "repair", "restore", "retry".
@@ -460,16 +636,12 @@ remediation_actions = ["upgrade", "repair", "retry"]
 
 # ---- Per-application definitions -------------------------------------------
 # One [[plugins.win32_apps.applications]] block per managed application.
-# Nothing is managed until at least one is defined - hence enabled = false
-# above.
+# Nothing is managed until at least one is defined - hence enabled = false.
 #
 # [[plugins.win32_apps.applications]]
 # name              = "Contoso VPN Client"
 # version           = "5.2.1"
 # # Values: "required" | "available" | "uninstall".
-# #   required  - install and keep installed
-# #   available - offer it, install only on request
-# #   uninstall - remove it if present
 # assignment        = "required"
 # install_command   = "setup.exe /silent /norestart"
 # uninstall_command = "MsiExec.exe /X{GUID} /quiet"
@@ -477,8 +649,9 @@ remediation_actions = ["upgrade", "repair", "retry"]
 # source            = "https://files.example.com/vpn-5.2.1.zip"
 # sha256            = "..."                   # verified before executing
 #
-# # How NS7 decides the app is already present and current. Checked in order;
-# # the first that matches wins. MSI and registry are the most reliable.
+# # How NS7 decides the app is present and current. Checked in order; the
+# # first that matches wins. MSI and registry are cheapest and most reliable -
+# # a script detection spawns PowerShell on every scan, so prefer the others.
 # # Types: "msi_product_code" | "registry" | "file_version" | "script".
 # [[plugins.win32_apps.applications.detection]]
 # type            = "msi_product_code"
@@ -489,12 +662,6 @@ remediation_actions = ["upgrade", "repair", "retry"]
 # path            = 'HKLM\Software\Contoso\VPN'
 # value           = "Version"
 # # Values: "equals" | "greater_or_equal" | "exists" | "version_greater_or_equal".
-# operator        = "version_greater_or_equal"
-# expected        = "5.2.1"
-#
-# [[plugins.win32_apps.applications.detection]]
-# type            = "file_version"
-# path            = 'C:\Program Files\Contoso\VPN\vpn.exe'
 # operator        = "version_greater_or_equal"
 # expected        = "5.2.1"
 #
@@ -513,16 +680,36 @@ remediation_actions = ["upgrade", "repair", "retry"]
 #
 # # Replaces an older application.
 # [plugins.win32_apps.applications.supersedes]
-# name                       = "Contoso VPN Client 4.x"
-# uninstall_previous         = true
+# name                = "Contoso VPN Client 4.x"
+# uninstall_previous  = true
+
+
+# =============================================================================
+# TUNING THE DEFAULTS
+# =============================================================================
+# To make the agent more responsive at the cost of some interruption:
+#   agent.scan_interval_secs        21600 -> 7200
+#   performance.scan_only_when_idle true  -> false
+#   maintenance_window.enabled      true  -> false
+#   plugins.*.deadline_days         reduce
+#
+# To make it even less intrusive (shared, low-powered or battery-bound
+# machines):
+#   agent.scan_interval_secs                43200 (12h)
+#   performance.idle_threshold_minutes      30
+#   performance.max_cpu_percent_to_start    15
+#   maintenance_window.days                 "weekends"
+#   plugins.store_apps.max_updates_per_window 5
+#
+# The one setting worth leaving alone is
+# plugins.windows_security_updates.deferral_days. Everything else here delays
+# *work*; that setting delays *protection*.
+# =============================================================================
 
 
 # =============================================================================
 # PLANNED PLUGINS (schema not final; not yet evaluated by the agent)
 # =============================================================================
-# The source model also covers two areas NS7 does not implement yet. They are
-# noted here so the intent is not lost, and will get their own sections:
-#
 #   windows_feature_updates - OS version upgrades (e.g. Windows 11 24H2 -> 25H2)
 #     target_version, deferral_days (0-365, typically 60-90),
 #     rollback_period_days (2-60), compatibility_hold, manual_approval
