@@ -4,6 +4,22 @@ Detailed, chronological record of successful actions performed by AI coding agen
 
 ## 2026-08-02
 
+### Release workflow: third fix, this time from real log text
+
+- User downloaded the actual job log from the GitHub UI (`C:\Temp\logs_83446804897\0_build-installer.txt`) and shared it directly, ending the blind API-based diagnosis loop. Found the real error via:
+  ```bash
+  grep -n "##\[error\]|error CNDL|error LGHT|Build MSI" 0_build-installer.txt
+  ```
+  ```
+  main.wxs(88): error LGHT0103: The system cannot find the file '..\assets\ns7-icon-light.ico'.
+  main.wxs(62): error LGHT0103: The system cannot find the file '..\assets\ns7-icon-light.ico'.
+  main.wxs(65): error LGHT0103: The system cannot find the file '..\assets\ns7-icon-dark.ico'.
+  ```
+  Confirms the previous fix's `$(var.CargoTargetBinDir)` binary paths were correct (no errors about them) — only the icon file paths were still wrong, meaning `light.exe`'s actual working directory isn't `client/wix/` as assumed.
+- Fixed by removing the path-guessing entirely: copied `client/assets/ns7-icon-{light,dark}.ico` into `client/wix/` as well, and changed both the `<File Source=...>` and `<Icon SourceFile=...>` references to bare filenames (same directory as `main.wxs`, which WiX resolves reliably regardless of the CI runner's actual invocation directory). Canonical copies remain at `client/assets/` for `tray-helper.rs`'s runtime use.
+- Updated `client/wix/main.wxs`'s header comment to record the confirmed cause (not the earlier speculative one) for future reference.
+- Not yet re-verified — next step is pushing via `dunow.ps1` and re-running the workflow.
+
 ### Release workflow: second failure diagnosed (WiX relative paths) + `dunow.ps1` helper added
 
 - Created `dunow.ps1` (repo root) — a reusable PowerShell script wrapping the standard `git add -A` → commit → push `dev` → merge into `main` → push `main` → checkout `dev` sequence, with a branch guard (must be on `dev`), a clean-tree no-op path, and a clear stop-and-report on merge conflict rather than doing anything destructive.
