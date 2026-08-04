@@ -1,6 +1,6 @@
 <#
 Runs ON the test box, inside the logged-on user's interactive session, via a
-Scheduled Task (see scripts/lab1-ui.ps1, which deploys and triggers it).
+Scheduled Task (see scripts/devbox-ui.ps1, which deploys and triggers it).
 
 Why this exists: a process launched over SSH lands in a non-interactive
 session with no desktop, so WinForms dialogs throw "not running in
@@ -20,7 +20,7 @@ the file has a UTF-8 BOM, so a UTF-8 character (an em-dash, say) arrives here
 mangled. In a comment that's merely ugly; inside a code string it is a fatal
 parse error, and the scheduled task then fails with exit 1 and produces no
 artifacts at all - which looks like "the task never ran" rather than a syntax
-problem. scripts/lab1-ui.ps1's `install` action verifies this on deploy.
+problem. scripts/devbox-ui.ps1's `install` action verifies this on deploy.
 #>
 $ErrorActionPreference = "Stop"
 

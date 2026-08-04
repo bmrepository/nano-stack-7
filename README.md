@@ -240,7 +240,7 @@ The helper processes were originally PowerShell + WinForms/WPF, which looked cor
 | Update check | Done with `fetch()` inside the webview against GitHub's CORS-enabled releases API, avoiding an HTTP+TLS stack in the agent purely for a version comparison. |
 | Dependency gating | `wry`/`tao`/`tray-icon`/`rfd` are scoped to `cfg(any(target_os = "windows", target_os = "macos"))`. wry needs WebKitGTK system packages on Linux, which would break the Linux compile-check used for fast iteration — and a Linux client is an explicit v1 non-goal. The helpers keep a text-output fallback on Linux so they stay usable while developing there. |
 
-**Status**: the status window is converted and verified on Windows. `setup-helper`, `consent-helper` and `tray-helper` are still PowerShell/WinForms and remain to be ported (`rfd` for the consent dialog, `tray-icon` for the tray, a webview form for setup). **Nothing here is verified on macOS** — there's no Mac in the loop yet, the way `lab1` covers Windows.
+**Status**: the status window is converted and verified on Windows. `setup-helper`, `consent-helper` and `tray-helper` are still PowerShell/WinForms and remain to be ported (`rfd` for the consent dialog, `tray-icon` for the tray, a webview form for setup). **Nothing here is verified on macOS** — there's no Mac in the loop yet, the way the dev box covers Windows.
 
 **Scheduler**
 - Runs the periodic health check-in (default cadence, e.g. 30 minutes) plus event-driven triggers (e.g. a plugin detects an anomaly and requests immediate analysis).
@@ -489,65 +489,95 @@ nano-stack-7/
 - Self-hosted Linux server on the home LAN, running **Portainer**, configured to track the `main` branch of `bmrepository/nano-stack-7` and redeploy `deploy/docker-compose.yml` on updates.
 - Container images built by CI from `main` are published to **GitHub Container Registry (ghcr.io)**; the compose file references these image tags rather than building in place.
 
-### 13.3 Client Dev/Test Target (Confirmed 2026-08-01, revised 2026-08-01: dedicated LAN box)
+### 13.3 Client Dev/Test Target (Confirmed 2026-08-01, revised 2026-08-04: VMware VM, not a physical LAN box)
 
-The client daemon's build toolchain and test target both run on a **dedicated physical Windows 11 PC on the home LAN**, not on the user's primary daily-driver PC, and not in a VirtualBox VM (superseding the earlier VirtualBox-VM plan):
+The client daemon's build toolchain and test target run on **`vm-lab1`, a dedicated Windows 11 Pro VM** (VMware, on the workstation's own VMnet8 NAT network), not on the user's primary daily-driver PC:
 
-- Reachable from any of the user's local PCs via **Tailscale** — a stable tailnet hostname, not a LAN IP, so it stays reachable even off the home network with no port-forwarding/NAT setup.
-- Claude (the agent) reaches it the same way: OpenSSH Server enabled on the box (built-in Windows optional feature) + a key, then plain `ssh user@devbox.<tailnet>.ts.net`. The one prerequisite is that whatever machine runs Claude's shell tools is itself joined to the same tailnet.
-- Toolchain and test runs both happen directly on this box's **bare-metal** Windows 11 install — no nested VM. Simpler and faster than a snapshot/revert VM workflow; the tradeoff is that state (installed test apps, prior enrollment history) accumulates over time unless the box is periodically reimaged. Accepted for now in favor of simplicity.
-- This solves both original concerns in one move: **host isolation** (the primary PC never gets MSVC/SDK/WiX/Sysinternals installed on it) and **mobility** (nothing to export/import when switching which physical PC you're sitting at — the dev box is a fixed, always-reachable point).
+- Reachable from the workstation at its static VMnet8 address (`192.168.155.10`) — no Tailscale needed, since the VM lives on the same physical host as the workstation. (The original design used a separate physical LAN box reached over Tailscale, `lab1`; decommissioned 2026-08-03 in favor of a VM the workstation's own hypervisor manages directly.)
+- Claude (the agent) reaches it two ways — see Section 13.6: SSH for scripted work (`scripts/dev-client.ps1`, `scripts/provision-devbox.ps1`), and VNC via the hypervisor's built-in console access for anything needing an interactive desktop, including before SSH exists on a freshly created VM at all.
+- Toolchain and test runs happen directly on the VM's Windows install — state (installed test apps, prior enrollment history) accumulates over time unless the VM is reverted to a clean snapshot or reimaged. Accepted for now in favor of simplicity, same tradeoff as the physical-box model it replaced.
+- This keeps the original goal intact — **host isolation** (the workstation never gets MSVC/SDK installed on it) and **mobility** (nothing to export/import when switching physical PCs, since the VM lives with the hypervisor) — while removing the physical-box's operational overhead (a separate machine to power, network, and keep patched).
 
-### 13.4 Dev/Test Box Software Requirements (Confirmed 2026-08-01, revised 2026-08-01: dedicated box, not local host)
+### 13.4 Dev/Test Box Software Requirements (Confirmed 2026-08-01, revised 2026-08-04: two dedicated VMs, not local host + WSL2)
 
-Split into what lives on the dedicated Windows 11 dev/test box (Section 13.3) versus what runs inside a WSL2 Ubuntu distro (which can live on the user's regular daily-driver PC, since it's Linux-only and adds no native-Windows footprint there) with rootless Podman. **Docker Desktop is not used** — Podman running rootless inside WSL2 is the container engine, matching the engine already used on the LAN Portainer server.
+Split across two dedicated VMware VMs on the workstation's VMnet8 NAT network, so neither the client's Windows-native toolchain nor the server's container engine ever touches the workstation's own install. **Docker Desktop is not used on the workstation** — everything server-side runs on its own dedicated Linux box.
 
-**On the dedicated Windows 11 dev/test box (bare metal)** — required because it's compiling/running actual Windows-native code:
-
-| Tool | Purpose |
-|---|---|
-| Rust via `rustup` (`x86_64-pc-windows-msvc` target, `rustfmt` + `clippy`) | Compiles the `client` crate — needs the MSVC linker for Windows Service/WinRT bindings. |
-| Visual Studio Build Tools (C++ workload) | MSVC linker required by Rust on Windows; native deps (`snow`, Windows Service bindings). |
-| Windows 11 SDK | Windows Service APIs, Winget invocation, WMI-based inventory, notification/toast APIs. |
-| WiX Toolset or `cargo-wix` | Client installer packaging — not required for PoC done-criteria, but useful to have ready ahead of Phase 2/3. |
-| Sysinternals suite (Process Explorer, Process Monitor) | Debugging service install/start issues; watching daemon memory/handle usage against the ~10–20MB RSS target. |
-| OpenSSH Server (Windows optional feature) + Tailscale | Lets Claude and the user reach this box remotely over the tailnet for builds, running, and debugging — see Section 13.3. |
-| Git + working GitHub SSH key | Source control for `nano-stack-7`, including working across the `main`/`dev` branches. |
-| VS Code + `rust-analyzer` + CodeLLDB (via Remote-SSH) | Primary IDE/debugger for the `client` crate, connected to this box over the tailnet. |
-
-**Inside a WSL2 Ubuntu distro (on the user's regular daily-driver PC)** — the server/shared-proto build, test, lint, and deploy-stack iteration loop never touches that PC's native Windows installation:
+**`vm-lab1` (Windows 11 Pro, `192.168.155.10`)** — required because it's compiling/running actual Windows-native code:
 
 | Tool | Purpose |
 |---|---|
-| Rust via `rustup` (Linux target, `rustfmt` + `clippy`) | Compiles/tests the `server` and `shared-proto` crates. |
-| `protoc` (Protocol Buffers compiler) | Required by `prost` to compile `.proto` files. |
-| Rootless Podman | Container engine for building/running `deploy/docker-compose.yml` locally before merging to `main` for Portainer to pick up — same engine as the LAN server, not Docker Desktop. |
-| PostgreSQL client tools (`psql` or DBeaver/TablePlus) + `sqlx-cli` | Schema inspection and running migrations. |
-| `cargo-watch` | Auto-rebuild/rerun during server iteration. |
+| Rust via `rustup` (`x86_64-pc-windows-msvc` target, `rustfmt` + `clippy`) | Compiles the `ns7-client` crate — needs the MSVC linker for Windows Service/WinRT bindings. |
+| Visual Studio Build Tools 2022 (VCTools + Windows 11 SDK) | MSVC linker required by Rust on Windows; native deps (`snow`, Windows Service bindings). |
+| `protoc` (Protocol Buffers compiler) | Required by `prost` to compile `.proto` files (the client depends on `shared/proto` too). |
+| Git | Source sync — the workstation pushes source to this box rather than this box pulling from GitHub. |
+| OpenSSH Server (Windows optional feature) | Lets the workstation reach this box remotely for builds and running — see `scripts/bootstrap-devbox.ps1`/`provision-devbox.ps1`. |
 
-I (the agent) reach the WSL2 side directly via `wsl.exe -d <distro> -- <command>` from my shell tools — no SSH or extra setup required on top of WSL2 itself. A `.devcontainer/` config pinning these versions is planned so the environment is reproducible rather than hand-installed (see Section 11.1 milestones for when this gets scaffolded).
+`scripts/provision-devbox.ps1` installs all of the above unattended over SSH; `scripts/bootstrap-devbox.ps1` is the one manual step (run on the VM's own console) that gets SSH enabled in the first place. WiX/`cargo-wix` and the Windows SDK's toast/WMI-heavy pieces are deliberately *not* listed as dev-box requirements: installer packaging happens in CI (`.github/workflows/release-client.yml`), and PoC done-criteria never needed them locally.
 
-### 13.5 Dev and Prod Environments (Confirmed 2026-08-03)
+**`vm-docker` (Ubuntu 26.04, `192.168.155.20`)** — the server/shared-proto build, test, lint, and deploy-stack loop:
 
-Two complete environments, so a change can be exercised end to end before it reaches production. **Dev and prod never share state** — separate databases, separate server identities, separate device fleets.
+| Tool | Purpose |
+|---|---|
+| Docker Engine (CE) + Compose plugin | Builds and runs `deploy/docker-compose.yml` locally before merging to `main` for Portainer to pick up — same compose files prod uses, just built from source instead of pulled. |
+| Portainer CE | Visual container/stack management for this box, reachable at `https://192.168.155.20:9443` — no workstation install needed. |
+
+Replaced WSL2 + rootless Podman on the workstation (retired 2026-08-04): that setup worked, but every fix it needed — mirrored networking, a hand-started podman API for Podman Desktop, no-systemd healthcheck workarounds — was a symptom of the dev server not having a real network identity of its own. A dedicated VM with a real IP just doesn't have those problems, and Portainer is a better visual tool than Podman Desktop was ever going to be against a WSL2 backend.
+
+I (the agent) reach `vm-docker` over SSH via PuTTY's `plink`/`pscp`, and `vm-lab1` the same way once its SSH is working. **SSH key auth does not currently work against either box** — see the note in [`scripts/devserver.config.ps1`](scripts/devserver.config.ps1) for why (a `publickey-hostbound@openssh.com` extension-negotiation bug hit by every OpenSSH client available in this environment) and what's used instead (password auth via `plink`, prompted per-run, never stored). I also have direct VNC access to `vm-lab1`'s console (VMware's built-in VNC server, enabled per-VM, no password) as a second channel — useful for anything that needs an actual interactive desktop, and for driving Windows-side setup before SSH is available at all. Combining the two (SSH for scripted work, VNC for interactive/desktop work) is the standing orchestration model for both boxes going forward.
+
+### 13.5 Dev and Prod Environments (Confirmed 2026-08-03, revised 2026-08-04: dev moved to two dedicated VMs)
+
+Two complete environments, so a change can be exercised end to end before it reaches production. **Dev and prod never share state** — separate databases, separate server identities, separate device fleets. **Prod is human-operated only** — the agent's role stops at CI publishing the image and the MSI; deploying to the LAN Portainer server and installing/validating the MSI are done by the user, not scripted or run by the agent.
 
 | | **DEV** | **PROD** |
 |---|---|---|
-| Server stack | WSL2 + rootless Podman on the dev PC (`whitesnow`) | Docker + Portainer on the LAN server (`192.168.0.101`) |
+| Server stack | Docker CE + Compose on `vm-docker` (`192.168.155.20`) | Docker + Portainer on the LAN server (`192.168.0.101`) |
 | Server image | Built from the local working tree (`deploy/docker-compose.dev.yml` override) | Pulled from GHCR — `ghcr.io/bmrepository/nano-stack-7-server:latest` |
-| Admin Console | `http://localhost:8080` (also on the dev PC's tailnet IP) | `http://192.168.0.101:8080` |
-| Client target | `lab1` — built from source over SSH, run straight from `target/debug` | The dev PC (`whitesnow`) — installs the released `.msi`, validating the real artifact end users get |
+| Admin Console | `http://192.168.155.20:8080` | `http://192.168.0.101:8080` |
+| Visual stack UI | Portainer CE on `vm-docker` — `https://192.168.155.20:9443` | Portainer on the LAN server |
+| Client target | `vm-lab1` (`192.168.155.10`) — built from source over SSH, run straight from `target/debug` | Installed and validated by the user on their own PC, against the real released `.msi` |
 | Tracked branch | Whatever is checked out locally, including uncommitted work | `main` |
 
-Note the deliberate inversion on the client side: **dev** iterates fast on `lab1` (which has the MSVC toolchain) without ever building an installer, while **prod validation** installs the actual signed-off MSI on the dev PC — so the thing being tested is the artifact a real user receives, not a `cargo build` output.
+Note the deliberate inversion on the client side: **dev** iterates fast on `vm-lab1` (which has the MSVC toolchain) without ever building an installer, while **prod validation** installs the actual signed-off MSI — so the thing being tested is the artifact a real user receives, not a `cargo build` output.
+
+##### The dev boxes
+
+Both are VMware VMs on the workstation's **VMnet8** NAT network, replacing the physical box `lab1` (tailnet `100.105.95.89`, decommissioned 2026-08-03) and WSL2 + rootless Podman on the workstation itself (retired 2026-08-04):
+
+- **`vm-lab1`** (`192.168.155.10`, static) — Windows 11 Pro, the dev **client** box. Defined in `scripts/devbox.config.ps1`.
+- **`vm-docker`** (`192.168.155.20`, static) — Ubuntu 26.04, the dev **server** box. Defined in `scripts/devserver.config.ps1`.
+
+Each config file is dot-sourced by the scripts that need it — host, user, remote paths, and (for `vm-docker`) a pinned SSH host-key fingerprint — so retiring a box is one edit, not a find-and-replace, and each value can be overridden per-invocation with an `NS7_DEVBOX_*`/`NS7_DEVSERVER_*` environment variable.
+
+Two things worth knowing about the VMnet8 topology:
+
+- **The server address is not the Tailscale IP.** Neither VM has tailnet membership; they reach the workstation on its VMnet8 address (`192.168.155.1`). `Resolve-DevBoxServerHost` (in `devbox.config.ps1`) derives this from the box's own address rather than hardcoding it, falling back to the tailnet IP for a genuinely remote box.
+- **Firewall rules are scoped by source address, not by profile.** A VMware NAT adapter typically carries no network profile at all, so `Private/Domain`-scoped rules never match its traffic. `scripts/setup-dev-networking.ps1` pins rules to the box's `/24` instead, which is both more reliable and tighter than opening a whole profile. (This script now only matters if the Admin Console needs to run on the workstation directly again — with the server stack on `vm-docker`, which publishes its own ports on its own IP, it isn't part of the normal flow.)
+
+Bringing up a replacement Windows box is two steps:
+
+```powershell
+# 1. On the new box's own console, elevated - the only manual step, because a
+#    clean Windows install has no SSH server to let us in.
+.\scripts\bootstrap-devbox.ps1 -PublicKey "ssh-ed25519 AAAA... "
+
+# 2. From here, over SSH. Idempotent; safe to re-run.
+.\scripts\provision-devbox.ps1 install
+```
+
+`vm-docker` was brought up manually (Docker CE + Compose plugin from Docker's official apt repo, Portainer CE via `docker run`) rather than through a script — see `agent-activity.md` (2026-08-04) for the exact commands, which are the basis for a future `provision-devserver.ps1` if a third box is ever needed.
 
 #### Scripts
 
 | Script | Purpose |
 |---|---|
-| `scripts/setup-dev-networking.ps1` | **One-time, run as admin.** Enables WSL2 mirrored networking + firewall rules so `lab1` can reach the dev stack. Without this, WSL2's NAT networking makes the dev server reachable only from the dev PC's own localhost. |
-| `scripts/dev-stack.ps1 <up\|down\|reset\|rebuild\|logs\|status\|api>` | Manages the dev server stack. `rebuild` is the inner-loop command after changing server or console code; `status` prints the address to enter in the client's setup dialog; `api` wires up Podman Desktop (see below). |
-| `scripts/dev-client.ps1 -WorkspaceId <id>` | Syncs, builds and runs the client on `lab1` against the dev stack. `-NoRun` builds only (then launch from lab1's own console to see the tray icon/dialogs — SSH sessions can't display UI); `-FreshEnrollment` clears saved client state first. |
+| `scripts/devbox.config.ps1` | Not run directly — dot-sourced by the others. Defines the dev **client** box (`vm-lab1`). |
+| `scripts/devserver.config.ps1` | Not run directly — dot-sourced by `dev-stack.ps1`. Defines the dev **server** box (`vm-docker`), plus `Invoke-DevServer`/`Copy-ToDevServer` helpers that authenticate with a per-run password prompt (see the SSH note in Section 13.4). |
+| `scripts/bootstrap-devbox.ps1 -PublicKey "..."` | **Run once on a new Windows box's own console, elevated.** Installs OpenSSH Server, makes PowerShell the default SSH shell, authorises our key, opens port 22. The one step that can't be remote, since a clean install has no way in. |
+| `scripts/provision-devbox.ps1 <install\|verify>` | Installs the client build toolchain on `vm-lab1` over SSH — Git, rustup + MSVC, VS Build Tools 2022 + Win11 SDK, protoc. Idempotent; `verify` reports without changing anything. |
+| `scripts/setup-dev-networking.ps1` | **One-time, run as admin.** Firewall rules scoped to the dev box's `/24`, for the uncommon case the Admin Console needs to run on the workstation itself. Not part of the normal flow now that the server stack lives on `vm-docker`. |
+| `scripts/dev-stack.ps1 <up\|down\|reset\|rebuild\|logs\|status>` | Manages the dev server stack on `vm-docker`. `rebuild` is the inner-loop command after changing server or console code; `status` prints the Admin Console and Portainer URLs. |
+| `scripts/dev-client.ps1 -WorkspaceId <id>` | Syncs, builds and runs the client on `vm-lab1` against the dev stack. `-NoRun` builds only (then launch from the box's own console to see the tray icon/dialogs — SSH sessions can't display UI); `-FreshEnrollment` clears saved client state first. |
 | `dunow.ps1 -Message "..."` | Commits, pushes `dev`, merges to `main`, pushes `main` — the promotion step. |
 
 #### Release flow
@@ -555,42 +585,26 @@ Note the deliberate inversion on the client side: **dev** iterates fast on `lab1
 1. **Develop**: `.\scripts\dev-stack.ps1 rebuild`, then `.\scripts\dev-client.ps1 -WorkspaceId <id>`. Iterate entirely against dev; nothing touches prod.
 2. **Promote**: `.\dunow.ps1 -Message "..."` — merges `dev` into `main` and pushes.
 3. **CI builds the prod image**: pushing `main` triggers `.github/workflows/publish-server-image.yml`, publishing `ghcr.io/bmrepository/nano-stack-7-server:latest` (plus an immutable `:<short-sha>` tag for rollbacks).
-4. **Deploy prod**: in Portainer, **pull and redeploy** the stack. It pulls the freshly published image rather than rebuilding from source, so a deploy is fast and runs the exact artifact CI produced. Data survives — see the persistence notes in Section 11.1.1.
+4. **Deploy prod** *(human)*: in Portainer, **pull and redeploy** the stack. It pulls the freshly published image rather than rebuilding from source, so a deploy is fast and runs the exact artifact CI produced. Data survives — see the persistence notes in Section 11.1.1.
 5. **Release the client installer**: push a `v*` tag to trigger `.github/workflows/release-client.yml`, which builds the MSI and publishes it as a GitHub Release.
-6. **Validate prod client**: install that MSI on the dev PC, point it at `192.168.0.101`, and confirm enrollment against production.
+6. **Validate prod client** *(human)*: install that MSI, point it at `192.168.0.101`, and confirm enrollment against production.
 
 **Rollback**: prod's compose file references `:latest`, so to pin an older build, change the `server` image tag to a specific `:<short-sha>` and redeploy.
 
-#### Podman Desktop (managing the dev stack from Windows)
+### 13.6 Automated UI Verification and Remote Orchestration (2026-08-03, revised 2026-08-04: VNC added)
 
-Podman Desktop reports **"We could not find any Podman machine"** on this setup, and creating one would be the wrong fix. Podman here is *rootless inside the `Ubuntu` WSL2 distro* — not a Podman-managed machine — so Podman Desktop has nothing to attach to, and a new machine would be a second, empty podman that doesn't run the dev stack.
-
-The fix is to expose the distro's podman API and register it as a connection:
-
-```powershell
-.\scripts\dev-stack.ps1 api
-```
-
-That starts `podman system service` on `127.0.0.1:8888` inside the distro and adds a `wsl-ubuntu` connection for Windows' `podman.exe`, which Podman Desktop reads too. `dev-stack.ps1 up` does this automatically; run `api` on its own after a `wsl --shutdown` (the service isn't socket-activated, since this distro runs without systemd) or if Podman Desktop loses the connection. Restart Podman Desktop once after the first run.
-
-Two deliberate choices worth knowing:
-- **Bound to `127.0.0.1`, never `0.0.0.0`.** The podman API is an unauthenticated container control plane; with mirrored networking enabled, a wildcard bind would expose it to the whole tailnet.
-- **Version skew is fine.** Windows `podman.exe` (6.x) talks to the distro's podman (5.x) over the REST API without issue — verified listing the running dev containers.
-
-### 13.6 Automated UI Verification on the Test Box (2026-08-03)
-
-Windows isolates an SSH session from the interactive desktop, so a UI process launched over SSH throws `"not running in UserInteractive mode"` and its tray icon renders where nobody can see it. That made every client UI change dependent on a human sitting at `lab1`. `scripts/lab1-ui.ps1` removes that dependency:
+Windows isolates an SSH session from the interactive desktop, so a UI process launched over SSH throws `"not running in UserInteractive mode"` and its tray icon renders where nobody can see it. That made every client UI change dependent on a human sitting at the test box. `scripts/devbox-ui.ps1` removes that dependency:
 
 1. **Runs in the real session** — registers a Scheduled Task with an *interactive* logon type (`schtasks /it`), triggered on demand over SSH, so the target launches on the logged-on user's desktop.
-2. **Captures what rendered** — `scripts/lab1-ui-harness.ps1` grabs the window image and a UI Automation dump of its controls, both copied back locally for review.
+2. **Captures what rendered** — `scripts/devbox-ui-harness.ps1` grabs the window image and a UI Automation dump of its controls, both copied back locally for review.
 3. **Drives the UI** — clicks controls (including multi-step sequences, needed to reach a control on a page that isn't shown yet) and captures the result, so behavior can be asserted rather than eyeballed.
 
 ```powershell
-.\scripts\lab1-ui.ps1 install       # once, and after editing the harness
-.\scripts\lab1-ui.ps1 status        # capture the agent status window
-.\scripts\lab1-ui.ps1 plugins       # navigate to Plugins, capture
-.\scripts\lab1-ui.ps1 update-check  # click "Check for updates", capture the outcome
-.\scripts\lab1-ui.ps1 tray          # start the agent, capture the notification area
+.\scripts\devbox-ui.ps1 install       # once, and after editing the harness
+.\scripts\devbox-ui.ps1 status        # capture the agent status window
+.\scripts\devbox-ui.ps1 plugins       # navigate to Plugins, capture
+.\scripts\devbox-ui.ps1 update-check  # click "Check for updates", capture the outcome
+.\scripts\devbox-ui.ps1 tray          # start the agent, capture the notification area
 ```
 
 Artifacts land in `.ui-artifacts/` (gitignored). This immediately paid for itself, catching defects that text assertions could never surface: a window rendered at 2x with 1x control coordinates, every line of a read-only text box pre-selected, content clipped behind a scrollbar, and "0 apps / 0 findings" displayed after a failed check-in instead of last-known values.
@@ -609,3 +623,16 @@ So a closed RDP window breaks it. For unattended use, log in at the physical con
 Two traps that cost real time and are now guarded against in the scripts:
 - **The harness must be pure ASCII.** Windows PowerShell 5.1 reads `.ps1` as ANSI unless the file has a UTF-8 BOM, so a UTF-8 em-dash arrives mangled. In a comment that's cosmetic; inside a code string it's a fatal parse error whose only symptom is "task exited 1, no artifacts". `install` now refuses to deploy non-ASCII or unparseable harness files.
 - **Clear remote artifacts before triggering.** Polling for `result.json` without deleting it first sees the *previous* run's file instantly and copies back stale output — reporting an old outcome as the current one.
+
+#### VNC as a second channel (added 2026-08-04)
+
+Both dev VMs' hypervisor (VMware Workstation/Player) can expose each VM's console directly over VNC — no guest-side agent, no password by default, reachable from the workstation at `127.0.0.1:5900` (and from anywhere on VMnet8 at the VM's own IP, port 5900, once VMware Tools is installed in the guest). This gives the agent a second, complementary channel to SSH:
+
+- **SSH** for anything scriptable: file sync, builds, `docker compose`, non-interactive commands.
+- **VNC** for anything that needs a real interactive desktop: the initial `bootstrap-devbox.ps1` run (before SSH exists at all), UI Automation-adjacent debugging, or — as happened setting up `vm-lab1` — driving a GUI when SSH itself is broken.
+
+The client is a minimal hand-rolled RFB 3.8 implementation (raw encoding, no auth, screenshot + keyboard/pointer input, PNG output via `zlib` with no Pillow dependency) run from WSL2, since WSL2's mirrored networking can reach the VM's VNC port but not arbitrary VMnet8 peers. It is scratch tooling, not checked into the repo — the point worth recording here is the *pattern* (SSH for scripted work, VNC for interactive work, on the same boxes), not the specific client.
+
+**Known issue blocking key-based SSH on both `vm-lab1` and `vm-docker`**: every OpenSSH client available in this environment (Windows-native OpenSSH 9.5p2/LibreSSL, Git for Windows' bundled OpenSSH 10.3p1/OpenSSL) fails to authenticate with a *key* once the server negotiates the `publickey-hostbound@openssh.com` extension — confirmed with `-vvv` on both boxes: the client offers the key, the server accepts the "would you take this" query, then the client's actual signing step silently fails (`we did not send a packet, disable method`), even via `ssh-agent`. Neither box's `sshd_config` exposes a toggle for the extension (it's negotiated at the KEX level, not configurable).
+
+Password auth has no signing step, so it never hits this bug at all — both boxes are driven with PuTTY's `plink`/`pscp` and a password prompted per-run (`Read-Host -AsSecureString`, or `NS7_DEVBOX_PASSWORD`/`NS7_DEVSERVER_PASSWORD` for non-interactive use), never stored. See `scripts/devbox.config.ps1` and `scripts/devserver.config.ps1`. A Windows-to-Windows alternative (WinRM/PowerShell Remoting) was tried for `vm-lab1` first and hit an unrelated, workstation-specific blocker — `Set-WSManQuickConfig` refusing to run at all because this workstation's VMware VMnet1/VMnet8 virtual adapters have no network-profile category, and the only fix is a registry security-policy change outside what should be done unilaterally. Dropped in favor of the same `plink` pattern already working for `vm-docker`, once it turned out password auth sidesteps the key-auth bug entirely.

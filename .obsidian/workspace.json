@@ -186,8 +186,9 @@
       "bases:Create new base": false
     }
   },
-  "active": "ec3ef383e95a1532",
+  "active": "8664ae7f3dc93356",
   "lastOpenFiles": [
+    "Draft.md",
     "agent-activity.md.tmp.18716.77523e28f6a8",
     "ns7-client/NS7Conf.reference.toml.tmp.18716.f7aa8669f1ff",
     "server/src/workspace.rs",
@@ -198,9 +199,7 @@
     "server/src/device_channel.rs",
     "server/src/db.rs",
     "server/src/checkin_channel.rs",
-    "server/src/auth.rs",
     "agent-activity.md",
-    "Draft.md",
     "README.md",
     "Project Map.canvas",
     "Nano Stack 7 Architecture and Requirements.md",
