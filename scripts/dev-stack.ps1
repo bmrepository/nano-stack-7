@@ -41,6 +41,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 . "$PSScriptRoot\devserver.config.ps1"
+Assert-DevServerConfigured
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Project = "ns7dev"

@@ -4,3 +4,10 @@
 
 # UI validation artifacts pulled back from the test box (screenshots, dumps)
 .ui-artifacts/
+
+# Real infrastructure detail (IPs, hostnames, host-key fingerprints, ops log)
+# lives privately in C:\workspace\KB-Notes\PROJ\nano-stack-7\ - see README
+# Section 13.4. Never commit these here.
+agent-activity.md
+scripts/devbox.local.ps1
+scripts/devserver.local.ps1

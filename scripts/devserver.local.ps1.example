@@ -1,0 +1,19 @@
+<#
+.SYNOPSIS
+    Template for scripts/devserver.local.ps1 - your real dev SERVER box values.
+
+.DESCRIPTION
+    Copy this file to devserver.local.ps1 (same directory) and fill in your
+    real values. devserver.local.ps1 is gitignored - it will never be
+    committed.
+
+    This file is dot-sourced by devserver.config.ps1 after $DevServer is
+    defined with placeholders, so it just overwrites the fields that matter.
+#>
+
+$DevServer.Host    = "203.0.113.20"                                   # your dev server box's real address
+$DevServer.HostKey = "SHA256:REPLACE-WITH-THE-REAL-HOST-KEY-FINGERPRINT"
+
+# Uncomment and adjust if your setup differs from the defaults in devserver.config.ps1:
+# $DevServer.User      = "sysadmin"
+# $DevServer.RemoteDir = "/home/sysadmin/dev/nano-stack-7"

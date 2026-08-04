@@ -48,6 +48,7 @@ if (-not $isAdmin) {
 }
 
 . "$PSScriptRoot\devbox.config.ps1"
+Assert-DevBoxConfigured
 if (-not $AllowedSubnet) {
     $AllowedSubnet = (($DevBox.Host -split '\.')[0..2] -join '.') + ".0/24"
 }

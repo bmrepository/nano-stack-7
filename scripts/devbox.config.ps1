@@ -14,36 +14,41 @@
         $pw = Read-DevBoxPassword
         Invoke-DevBox $pw "some command"
 
-    Every value can be overridden per-invocation with an environment variable,
-    so a second box can be driven without editing anything:
-
-        $env:NS7_DEVBOX_HOST = "192.168.155.11"
+.PARAMETER (none - this is a dot-sourced config file, not a script)
 
 .NOTES
-    Current box: vm-lab1, a Windows 11 Pro VM on this workstation's VMware
-    VMnet8 NAT network. It replaced the physical box lab1 (Tailscale
-    100.105.95.89), which was decommissioned.
+    This repo is public. The real Host/HostKey values are infrastructure
+    fingerprints (they identify and help target a specific real machine on a
+    specific real network) with zero value to anyone forking this project, so
+    they don't belong in a public commit - only the *pattern* does.
 
-    Because the box is a NAT guest rather than a tailnet peer, the address it
-    must use to reach this workstation's dev stack is this PC's VMnet8
-    address, not its Tailscale IP. See Resolve-DevBoxServerHost.
+    Real values live in scripts/devbox.local.ps1 (gitignored, never
+    committed - see devbox.local.ps1.example) or in NS7_DEVBOX_* environment
+    variables. Set one of those up before using any script that dot-sources
+    this file. This project's own real values are kept privately outside this
+    repo - see README Section 13.4.
 
-    SSH key auth does not work against this box: its OpenSSH server (like
-    vm-docker's) negotiates the `publickey-hostbound@openssh.com` extension,
-    and every OpenSSH client available in this environment fails to produce a
-    valid signature once that happens - confirmed with -vvv, including via
-    ssh-agent. Password auth is unaffected (no signing step involved), so
-    automation uses PuTTY's `plink`/`pscp` here too, exactly like
-    devserver.config.ps1 - see Invoke-DevBox/Copy-ToDevBox below. The password
-    is deliberately never stored - every script prompts with Read-Host
-    -AsSecureString (or reads NS7_DEVBOX_PASSWORD for non-interactive use).
+    Current box (as of the last migration): a Windows 11 Pro VM on this
+    workstation's own VMware NAT network, reached directly (no VPN needed
+    since it's a guest on the same physical host).
 
-    The VM's address is static, assigned in the guest.
+    SSH key auth does not work against this box: its OpenSSH server (like the
+    dev server box's) negotiates the `publickey-hostbound@openssh.com`
+    extension, and every OpenSSH client available in this environment fails to
+    produce a valid signature once that happens - confirmed with -vvv,
+    including via ssh-agent. Password auth is unaffected (no signing step
+    involved), so automation uses PuTTY's `plink`/`pscp` here too, exactly
+    like devserver.config.ps1 - see Invoke-DevBox/Copy-ToDevBox below. The
+    password is deliberately never stored - every script prompts with
+    Read-Host -AsSecureString (or reads NS7_DEVBOX_PASSWORD for
+    non-interactive use).
 #>
 
 $DevBox = @{
-    # The dev client box. Static, assigned in the guest - not a DHCP lease.
-    Host      = "192.168.155.10"
+    # Real values come from devbox.local.ps1 or NS7_DEVBOX_* env vars - see
+    # the .NOTES above. Left blank here on purpose; Assert-DevBoxConfigured
+    # below fails loudly rather than silently trying to reach nothing.
+    Host      = ""
     User      = "sysadmin"
 
     # Kept for if/when the publickey-hostbound signing bug is fixed upstream -
@@ -54,7 +59,7 @@ $DevBox = @{
     # pinned up front - captured once via a manual `plink -ssh <host>` accept.
     # Re-capture (same command, read the fingerprint it reports) if the VM is
     # ever rebuilt/reimaged, since that changes the host key.
-    HostKey   = "SHA256:TyfqzaNalwIjZCDdDEAv4uPQyZPgL2RiNir9uBdqL4E"
+    HostKey   = ""
 
     # Where source is synced to and built on that box.
     RemoteDir = "C:/dev/nano-stack-7"
@@ -67,9 +72,28 @@ $DevBox = @{
     ServerHost = ""
 }
 
+# Gitignored, per-workstation overrides - real Host/HostKey (and anything else
+# worth overriding) live here. Loaded before env vars so an env var can still
+# win for a one-off invocation.
+$localOverride = Join-Path $PSScriptRoot "devbox.local.ps1"
+if (Test-Path $localOverride) { . $localOverride }
+
 foreach ($k in @($DevBox.Keys)) {
     $override = [Environment]::GetEnvironmentVariable("NS7_DEVBOX_" + $k.ToUpperInvariant())
     if ($override) { $DevBox[$k] = $override }
+}
+
+<#
+Fails loudly and immediately if the box hasn't been configured, instead of
+letting plink fail confusingly against an empty host. Every script that
+actually talks to the box should call this right after dot-sourcing.
+#>
+function Assert-DevBoxConfigured {
+    if (-not $DevBox.Host -or -not $DevBox.HostKey) {
+        throw "DevBox.Host/HostKey are not set. Copy scripts\devbox.local.ps1.example to " +
+              "scripts\devbox.local.ps1 and fill in your real values (gitignored - never " +
+              "committed), or set NS7_DEVBOX_HOST / NS7_DEVBOX_HOSTKEY."
+    }
 }
 
 <#
@@ -130,6 +154,7 @@ function Invoke-DevBox {
         [Parameter(Mandatory = $true)][string]$Command,
         [switch]$AllowFailure
     )
+    Assert-DevBoxConfigured
     $plink = Get-Command plink -ErrorAction SilentlyContinue
     if (-not $plink) {
         throw "plink not found. Install PuTTY: winget install --id PuTTY.PuTTY --exact"
@@ -150,6 +175,7 @@ function Copy-ToDevBox {
         [Parameter(Mandatory = $true)][string]$LocalPath,
         [Parameter(Mandatory = $true)][string]$RemotePath
     )
+    Assert-DevBoxConfigured
     & pscp -batch -r -hostkey $DevBox.HostKey -pw $Password $LocalPath "$($DevBox.User)@$($DevBox.Host):$RemotePath" 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "pscp failed copying $LocalPath -> $RemotePath"
@@ -165,6 +191,7 @@ function Copy-FromDevBox {
         [Parameter(Mandatory = $true)][string]$RemotePath,
         [Parameter(Mandatory = $true)][string]$LocalPath
     )
+    Assert-DevBoxConfigured
     & pscp -batch -r -hostkey $DevBox.HostKey -pw $Password "$($DevBox.User)@$($DevBox.Host):$RemotePath" $LocalPath 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "pscp failed copying $RemotePath -> $LocalPath"

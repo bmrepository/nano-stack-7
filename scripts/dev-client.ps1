@@ -58,6 +58,7 @@ $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\devbox.config.ps1"
 if ($DevBoxHost) { $DevBox.Host = $DevBoxHost }
 if ($DevBoxUser) { $DevBox.User = $DevBoxUser }
+Assert-DevBoxConfigured
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RemoteDir = $DevBox.RemoteDir

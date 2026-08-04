@@ -1,0 +1,19 @@
+<#
+.SYNOPSIS
+    Template for scripts/devbox.local.ps1 - your real dev CLIENT box values.
+
+.DESCRIPTION
+    Copy this file to devbox.local.ps1 (same directory) and fill in your real
+    values. devbox.local.ps1 is gitignored - it will never be committed.
+
+    This file is dot-sourced by devbox.config.ps1 after $DevBox is defined
+    with placeholders, so it just overwrites the fields that matter.
+#>
+
+$DevBox.Host    = "203.0.113.10"                                   # your dev client box's real address
+$DevBox.HostKey = "SHA256:REPLACE-WITH-THE-REAL-HOST-KEY-FINGERPRINT"
+
+# Uncomment and adjust if your setup differs from the defaults in devbox.config.ps1:
+# $DevBox.User      = "sysadmin"
+# $DevBox.RemoteDir = "C:/dev/nano-stack-7"
+# $DevBox.UiTestDir = "C:/dev/ns7-uitest"
