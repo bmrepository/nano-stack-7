@@ -1,3 +1,12 @@
+// This is a background daemon, not a console tool: launched by double-click,
+// a Start Menu/Startup shortcut, or a Scheduled Task, none of which have a
+// console for it to attach to. Without this attribute, Windows allocates a
+// brand new console window for it every single time - visible, and
+// permanent, since the daemon runs forever. `attach_console()` below claws
+// back console I/O for the one case that still wants it: `--show-config`
+// etc. run from an existing terminal.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod cli;
 
 use client::config::{self, Ns7Config};
@@ -8,9 +17,54 @@ use cli::Cli;
 use shared_proto::{noise, EnrollmentRequest, EnrollmentResponse};
 use tokio::net::TcpStream;
 
+/// Attaches to the launching process's console if one exists (running from a
+/// terminal), so `println!`/`tracing` output is visible there too. Does
+/// nothing - not even an error - when there's no parent console (double
+/// click, shortcut, Scheduled Task), which is exactly the case
+/// `windows_subsystem = "windows"` above exists to keep console-free.
+#[cfg(windows)]
+fn attach_console() {
+    unsafe {
+        windows_sys::Win32::System::Console::AttachConsole(
+            windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_console() {}
+
+/// Tracing goes to a file, not stdout - a `windows_subsystem = "windows"`
+/// binary usually has nowhere to send stdout anyway (see `attach_console`),
+/// and a background daemon needs to be diagnosable via its own log file
+/// regardless of how it was launched, not only when someone happens to have
+/// a console attached.
+fn init_tracing() {
+    let dir = config::state_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("agent.log"));
+    match file {
+        Ok(f) => {
+            tracing_subscriber::fmt()
+                .with_writer(std::sync::Mutex::new(f))
+                .with_ansi(false)
+                .init();
+        }
+        Err(_) => {
+            // Last resort so a locked-down environment still logs somewhere,
+            // if a console happens to be attached.
+            tracing_subscriber::fmt::init();
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    attach_console();
+    init_tracing();
 
     // Must come before anything else touches shared state (config, identity,
     // the tray icon) - a second launch should do nothing at all, not race

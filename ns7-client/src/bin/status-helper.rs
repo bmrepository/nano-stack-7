@@ -1,3 +1,11 @@
+// Never allocate a console - see the note in tray-helper.rs. The webview
+// window itself is unaffected; this only suppresses the unrelated black
+// console window Windows would otherwise create for this process. Left
+// unset on non-Windows platforms (irrelevant on macOS, and the Linux build
+// of this binary deliberately prints to stdout instead of showing a window
+// at all - see the bottom of this file).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 /// Status window for the Nano Stack 7 client agent.
 ///
 /// Separate helper process, same pattern as `consent-helper` and
@@ -23,7 +31,7 @@ use serde::Serialize;
 const WINDOW_TITLE: &str = "Nano Stack 7 Agent";
 
 fn main() {
-    // A second click on the tray icon (or the "Status..." menu item) while a
+    // A second click on the tray icon (or the "Open NS7" menu item) while a
     // window is already open should surface that window, not stack a second
     // one on top of it.
     let _lock = match single_instance::acquire(single_instance::STATUS_WINDOW_LOCK_NAME) {

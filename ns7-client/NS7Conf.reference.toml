@@ -359,7 +359,14 @@ id = ""
 # =============================================================================
 # Every plugin shares two keys:
 #
-#   enabled  true | false
+#   enabled  true | false. Every plugin ships false, regardless of what its
+#            own recommendation below says about the rest of its settings -
+#            turning on real system changes (patching, app updates) is
+#            something the user opts into explicitly, either by hand-editing
+#            this file or by enrolling with a workspace whose Admin Console
+#            enables it. The `enabled = true` noted for some plugins below
+#            was the pre-2026-08-04 default; every *other* field still uses
+#            that recommended value.
 #
 #   consent  "auto"        act without asking (only for low blast radius)
 #            "ask"         prompt the user, act only on approval
@@ -381,7 +388,7 @@ id = ""
 # Security-classified OS updates. Kept separate from quality updates because
 # they warrant a shorter deadline.
 [plugins.windows_security_updates]
-enabled = true
+enabled = false
 consent = "ask"
 
 # Deliberately 0 while everything else here is relaxed. Deferring the
@@ -436,7 +443,7 @@ paused_until = ""
 # these carry more regression risk, less urgency, and are usually the largest
 # downloads.
 [plugins.windows_quality_updates]
-enabled = true
+enabled = false
 consent = "ask"
 
 # Also lets early adopters surface problems before this device takes them.
@@ -480,7 +487,7 @@ paused_until = ""
 # -----------------------------------------------------------------------------
 # Click-to-Run updates for the Microsoft 365 desktop apps.
 [plugins.microsoft_365_apps]
-enabled = true
+enabled = false
 consent = "ask"
 
 # Release channel. Slower channels trade features for stability, and update
@@ -527,7 +534,7 @@ paused_until = ""
 # utilities. Low blast radius and no restarts, so this is the one plugin where
 # unattended updates are the sensible default.
 [plugins.store_apps]
-enabled = true
+enabled = false
 # Safe to run unattended - still gated by [performance] and the maintenance
 # window, so it happens while the machine is idle. Default: "auto".
 consent = "auto"

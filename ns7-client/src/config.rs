@@ -5,13 +5,29 @@ pub const CONFIG_FILE_NAME: &str = "NS7Conf.toml";
 
 /// The client's local configuration file (`NS7Conf.toml` in the state dir).
 ///
-/// Two distinct kinds of setting live here on purpose:
-///   * `[server]` / `[workspace]` — entered once by the user (setup dialog or
-///     CLI flags) and then left alone.
-///   * `[synced]` — mirrored from whatever the server pushes on each check-in,
-///     so the effective configuration is inspectable on the device itself.
+/// A fresh install writes every section below populated with its documented
+/// recommended default (see `NS7Conf.reference.toml`) - never a bare-minimum
+/// file with everything empty. Standalone is meant to be a fully working
+/// mode on its own, so there is nothing for the user to fill in before every
+/// plugin and policy has a real, working value.
 ///
-/// `StandaloneMode` is the default for a fresh install: no server, no
+/// One deliberate departure from the reference doc's individual "recommended"
+/// values: every plugin's `enabled` defaults to `false` here, regardless of
+/// what that plugin's own doc comment recommends. Turning on real system
+/// changes (patching, app updates) is something the user opts into
+/// explicitly - by hand-editing this file, or by enrolling with a workspace
+/// whose Admin Console turns plugins on - not something a fresh install does
+/// on their behalf. Every other field keeps its documented recommended value.
+///
+/// Two distinct kinds of setting live here:
+///   * Everything except `[synced]` - entered once (by the user, hand-editing
+///     this file, or the in-app Connection editor) and then left alone,
+///     unless a workspace's Admin Console owns it (see `[managed]`).
+///   * `[synced]` - mirrored from whatever the server pushed on the last
+///     check-in, so the effective configuration is inspectable on the
+///     device itself.
+///
+/// `StandaloneMode = true` is the default for a fresh install: no server, no
 /// workspace, every plugin runs against purely local policy. Switching to
 /// server-managed happens by setting `[server]`/`[workspace]` (from the
 /// status window's Connection card, or `--server-host`/`--workspace-id`).
@@ -22,15 +38,277 @@ pub struct Ns7Config {
     pub standalone_mode: bool,
 
     #[serde(default)]
-    pub server: ServerSection,
+    pub agent: AgentSection,
+    #[serde(default)]
+    pub performance: PerformanceSection,
+    #[serde(default)]
+    pub maintenance_window: MaintenanceWindowSection,
+    #[serde(default)]
+    pub device: DeviceSection,
+    #[serde(default)]
+    pub active_hours: ActiveHoursSection,
+    #[serde(default)]
+    pub notifications: NotificationsSection,
+    #[serde(default)]
+    pub restart: RestartSection,
+    #[serde(default)]
+    pub delivery_optimization: DeliveryOptimizationSection,
+    #[serde(default)]
+    pub managed: ManagedSection,
 
     #[serde(default)]
+    pub server: ServerSection,
+    #[serde(default)]
     pub workspace: WorkspaceSection,
+
+    #[serde(default)]
+    pub plugins: PluginsSection,
 
     /// Absent until the first successful check-in.
     #[serde(default)]
     pub synced: Option<SyncedSection>,
 }
+
+// -----------------------------------------------------------------------
+// [agent]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AgentSection {
+    pub scan_interval_secs: u32,
+    pub checkin_interval_secs: u32,
+    pub startup_scan_delay_minutes: u32,
+    pub log_level: String,
+    pub tray_icon: bool,
+    pub self_update: String,
+}
+
+impl Default for AgentSection {
+    fn default() -> Self {
+        Self {
+            scan_interval_secs: 21600,
+            checkin_interval_secs: 3600,
+            startup_scan_delay_minutes: 15,
+            log_level: "info".to_string(),
+            tray_icon: true,
+            self_update: "notify".to_string(),
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// [performance]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PerformanceSection {
+    pub scan_only_when_idle: bool,
+    pub idle_threshold_minutes: u32,
+    pub max_cpu_percent_to_start: u32,
+    pub yield_when_user_returns: bool,
+    pub process_priority: String,
+    pub io_priority: String,
+    pub defer_on_battery: bool,
+    pub battery_override_above_percent: u32,
+    pub defer_on_metered_connection: bool,
+    pub max_concurrent_plugin_scans: u32,
+    pub prefer_outside_active_hours: bool,
+    pub max_postpone_days: u32,
+}
+
+impl Default for PerformanceSection {
+    fn default() -> Self {
+        Self {
+            scan_only_when_idle: true,
+            idle_threshold_minutes: 10,
+            max_cpu_percent_to_start: 25,
+            yield_when_user_returns: true,
+            process_priority: "below_normal".to_string(),
+            io_priority: "low".to_string(),
+            defer_on_battery: true,
+            battery_override_above_percent: 0,
+            defer_on_metered_connection: true,
+            max_concurrent_plugin_scans: 1,
+            prefer_outside_active_hours: true,
+            max_postpone_days: 7,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// [maintenance_window]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MaintenanceWindowSection {
+    pub enabled: bool,
+    pub days: String,
+    pub start: String,
+    pub end: String,
+    pub catch_up_if_missed: bool,
+    pub wake_to_run: bool,
+}
+
+impl Default for MaintenanceWindowSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            days: "daily".to_string(),
+            start: "22:30".to_string(),
+            end: "05:30".to_string(),
+            catch_up_if_missed: true,
+            wake_to_run: false,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// [device]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DeviceSection {
+    pub ring: String,
+    pub additional_delay_days: u32,
+    pub label: String,
+}
+
+impl Default for DeviceSection {
+    fn default() -> Self {
+        Self {
+            ring: "production".to_string(),
+            additional_delay_days: 0,
+            label: String::new(),
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// [active_hours]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ActiveHoursSection {
+    pub mode: String,
+    pub start: String,
+    pub end: String,
+}
+
+impl Default for ActiveHoursSection {
+    fn default() -> Self {
+        Self {
+            mode: "manual".to_string(),
+            start: "06:00".to_string(),
+            end: "22:00".to_string(),
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// [notifications]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct NotificationsSection {
+    pub level: String,
+    pub show_available: bool,
+    pub show_restart_warning: bool,
+    pub reminder_interval_minutes: u32,
+    pub deadline_warning_days: u32,
+}
+
+impl Default for NotificationsSection {
+    fn default() -> Self {
+        Self {
+            level: "failures_only".to_string(),
+            show_available: false,
+            show_restart_warning: true,
+            reminder_interval_minutes: 60,
+            deadline_warning_days: 3,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// [restart]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RestartSection {
+    pub behavior: String,
+    pub outside_active_hours_only: bool,
+    pub inside_maintenance_window_only: bool,
+    pub scheduled_day: String,
+    pub scheduled_time: String,
+    pub countdown_minutes: u32,
+    pub max_postponements: u32,
+    pub block_restart_if_running: Vec<String>,
+}
+
+impl Default for RestartSection {
+    fn default() -> Self {
+        Self {
+            behavior: "user_controlled".to_string(),
+            outside_active_hours_only: true,
+            inside_maintenance_window_only: true,
+            scheduled_day: "sunday".to_string(),
+            scheduled_time: "03:00".to_string(),
+            countdown_minutes: 120,
+            max_postponements: 5,
+            block_restart_if_running: Vec::new(),
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// [delivery_optimization]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DeliveryOptimizationSection {
+    pub download_mode: String,
+    pub cache_size_gb: u32,
+    pub max_bandwidth_percent_active: u32,
+    pub max_bandwidth_percent_idle: u32,
+}
+
+impl Default for DeliveryOptimizationSection {
+    fn default() -> Self {
+        Self {
+            download_mode: "lan_peering".to_string(),
+            cache_size_gb: 10,
+            max_bandwidth_percent_active: 20,
+            max_bandwidth_percent_idle: 80,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// [managed] - server-owned once enrolled; see apply_synced_plugins below
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ManagedSection {
+    pub active: bool,
+    pub last_sync_unix: i64,
+    pub server_version: String,
+    pub workspace_name: String,
+    /// TOML paths the server owns, e.g. `["plugins.windows_security_updates"]`.
+    ///
+    /// NOTE: the check-in wire protocol (`CheckInResponse`/`PluginConfig`)
+    /// does not carry this list today - only per-plugin `enabled` and
+    /// `consent_tier`. This field exists so the file has the documented
+    /// shape and so a future protocol change has somewhere to land; until
+    /// then it is always empty and `apply_synced_plugins` overwrites a
+    /// plugin's `enabled`/`consent` whenever enrolled, regardless of this
+    /// list. See `NS7Conf.reference.toml`'s `[managed]` section.
+    #[serde(default)]
+    pub owned_sections: Vec<String>,
+}
+
+// -----------------------------------------------------------------------
+// [server] / [workspace]
+// -----------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServerSection {
@@ -46,26 +324,6 @@ pub struct ServerSection {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct WorkspaceSection {
     pub id: String,
-}
-
-/// Mirrored from the server on every check-in — treat as read-only; local
-/// edits are overwritten.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct SyncedSection {
-    pub server_version: String,
-    pub workspace_name: String,
-    pub checkin_interval_secs: i64,
-    pub last_synced_unix: i64,
-    #[serde(default)]
-    pub plugins: Vec<PluginEntry>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PluginEntry {
-    pub id: String,
-    pub name: String,
-    pub enabled: bool,
-    pub consent_tier: String,
 }
 
 fn default_enrollment_port() -> u16 {
@@ -86,7 +344,300 @@ impl Default for ServerSection {
     }
 }
 
+// -----------------------------------------------------------------------
+// [synced] - mirrored from the server on every check-in; read-only
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct SyncedSection {
+    pub server_version: String,
+    pub workspace_name: String,
+    pub checkin_interval_secs: i64,
+    pub last_synced_unix: i64,
+    #[serde(default)]
+    pub plugins: Vec<PluginEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PluginEntry {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub consent_tier: String,
+}
+
+// -----------------------------------------------------------------------
+// [plugins.*]
+// -----------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct PluginsSection {
+    #[serde(default)]
+    pub windows_security_updates: WindowsSecurityUpdatesPlugin,
+    #[serde(default)]
+    pub windows_quality_updates: WindowsQualityUpdatesPlugin,
+    #[serde(default)]
+    pub microsoft_365_apps: Microsoft365AppsPlugin,
+    #[serde(default)]
+    pub store_apps: StoreAppsPlugin,
+    #[serde(default)]
+    pub win32_apps: Win32AppsPlugin,
+}
+
+impl PluginsSection {
+    /// Every plugin by (id, mutable enabled+consent accessor), for the
+    /// generic "apply whatever the server sent" merge in `apply_synced`.
+    /// Kept as one place so a new plugin only has to be added here once.
+    fn set_by_id(&mut self, id: &str, enabled: bool, consent: &str) -> bool {
+        let target = match id {
+            "windows_security_updates" => &mut self.windows_security_updates.enabled,
+            "windows_quality_updates" => &mut self.windows_quality_updates.enabled,
+            "microsoft_365_apps" => &mut self.microsoft_365_apps.enabled,
+            "store_apps" => &mut self.store_apps.enabled,
+            "win32_apps" => &mut self.win32_apps.enabled,
+            _ => return false,
+        };
+        *target = enabled;
+        let consent_target = match id {
+            "windows_security_updates" => &mut self.windows_security_updates.consent,
+            "windows_quality_updates" => &mut self.windows_quality_updates.consent,
+            "microsoft_365_apps" => &mut self.microsoft_365_apps.consent,
+            "store_apps" => &mut self.store_apps.consent,
+            "win32_apps" => &mut self.win32_apps.consent,
+            _ => return false,
+        };
+        *consent_target = consent.to_string();
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WindowsSecurityUpdatesPlugin {
+    pub enabled: bool,
+    pub consent: String,
+    pub deferral_days: u32,
+    pub deadline_days: u32,
+    pub grace_period_days: u32,
+    pub auto_reboot_after_deadline: bool,
+    pub severity_filter: Vec<String>,
+    pub include_microsoft_products: bool,
+    pub update_source: String,
+    pub wsus_server: String,
+    pub paused: bool,
+    pub paused_until: String,
+}
+
+impl Default for WindowsSecurityUpdatesPlugin {
+    fn default() -> Self {
+        Self {
+            // Disabled by default - see the Ns7Config doc comment. Every
+            // other field keeps the reference doc's recommended value.
+            enabled: false,
+            consent: "ask".to_string(),
+            deferral_days: 0,
+            deadline_days: 10,
+            grace_period_days: 3,
+            auto_reboot_after_deadline: true,
+            severity_filter: vec!["critical".to_string(), "important".to_string()],
+            include_microsoft_products: true,
+            update_source: "windows_update".to_string(),
+            wsus_server: String::new(),
+            paused: false,
+            paused_until: String::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WindowsQualityUpdatesPlugin {
+    pub enabled: bool,
+    pub consent: String,
+    pub deferral_days: u32,
+    pub deadline_days: u32,
+    pub grace_period_days: u32,
+    pub auto_reboot_after_deadline: bool,
+    pub automatic_approval: bool,
+    pub include_drivers: bool,
+    pub driver_consent: String,
+    pub driver_manual_approval_classes: Vec<String>,
+    pub update_source: String,
+    pub paused: bool,
+    pub paused_until: String,
+}
+
+impl Default for WindowsQualityUpdatesPlugin {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            consent: "ask".to_string(),
+            deferral_days: 14,
+            deadline_days: 21,
+            grace_period_days: 3,
+            auto_reboot_after_deadline: true,
+            automatic_approval: true,
+            include_drivers: false,
+            driver_consent: "notify_only".to_string(),
+            driver_manual_approval_classes: vec![
+                "gpu".to_string(),
+                "bios".to_string(),
+                "firmware".to_string(),
+                "storage".to_string(),
+            ],
+            update_source: "windows_update".to_string(),
+            paused: false,
+            paused_until: String::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Microsoft365AppsPlugin {
+    pub enabled: bool,
+    pub consent: String,
+    pub update_channel: String,
+    pub target_version: String,
+    pub deadline_days: u32,
+    pub rollback_enabled: bool,
+    pub hide_update_notifications: bool,
+    pub force_app_shutdown: bool,
+    pub paused: bool,
+    pub paused_until: String,
+}
+
+impl Default for Microsoft365AppsPlugin {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            consent: "ask".to_string(),
+            update_channel: "monthly_enterprise".to_string(),
+            target_version: String::new(),
+            deadline_days: 14,
+            rollback_enabled: true,
+            hide_update_notifications: true,
+            force_app_shutdown: false,
+            paused: false,
+            paused_until: String::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StoreAppsPlugin {
+    pub enabled: bool,
+    pub consent: String,
+    pub update_source: String,
+    pub installation_context: String,
+    pub user_update_control: String,
+    pub update_all: bool,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    pub pinned: Vec<PinnedPackage>,
+    pub delay_days: u32,
+    pub max_updates_per_window: u32,
+}
+
+impl Default for StoreAppsPlugin {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            consent: "auto".to_string(),
+            update_source: "both".to_string(),
+            installation_context: "system".to_string(),
+            user_update_control: "allowed".to_string(),
+            update_all: true,
+            include: Vec::new(),
+            exclude: Vec::new(),
+            pinned: Vec::new(),
+            delay_days: 3,
+            max_updates_per_window: 10,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PinnedPackage {
+    pub id: String,
+    pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Win32AppsPlugin {
+    pub enabled: bool,
+    pub consent: String,
+    pub installation_context: String,
+    pub architecture: String,
+    pub restart_behavior: String,
+    pub install_timeout_minutes: u32,
+    pub success_return_codes: Vec<i32>,
+    pub retry_return_codes: Vec<i32>,
+    pub max_retries: u32,
+    pub retry_delay_minutes: u32,
+    pub user_notifications: String,
+    pub deadline_days: u32,
+    pub remediation_actions: Vec<String>,
+    /// One entry per managed application. Nothing is managed until at least
+    /// one is defined - empty by default, matching the reference doc. Kept
+    /// as opaque TOML tables rather than a fully-typed struct: the
+    /// per-application shape (detection/requirements/dependencies/supersedes)
+    /// is explicitly marked "schema not final" in the reference doc, and
+    /// this plugin ships disabled with no applications configured either way.
+    #[serde(default)]
+    pub applications: Vec<toml::Value>,
+}
+
+impl Default for Win32AppsPlugin {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            consent: "ask".to_string(),
+            installation_context: "system".to_string(),
+            architecture: "x64".to_string(),
+            restart_behavior: "suppress".to_string(),
+            install_timeout_minutes: 60,
+            success_return_codes: vec![0, 3010, 1641],
+            retry_return_codes: vec![1618],
+            max_retries: 2,
+            retry_delay_minutes: 60,
+            user_notifications: "failures_only".to_string(),
+            deadline_days: 14,
+            remediation_actions: vec!["upgrade".to_string(), "repair".to_string(), "retry".to_string()],
+            applications: Vec::new(),
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// Ns7Config impl
+// -----------------------------------------------------------------------
+
+impl Default for Ns7Config {
+    fn default() -> Self {
+        Self {
+            standalone_mode: true,
+            agent: AgentSection::default(),
+            performance: PerformanceSection::default(),
+            maintenance_window: MaintenanceWindowSection::default(),
+            device: DeviceSection::default(),
+            active_hours: ActiveHoursSection::default(),
+            notifications: NotificationsSection::default(),
+            restart: RestartSection::default(),
+            delivery_optimization: DeliveryOptimizationSection::default(),
+            managed: ManagedSection::default(),
+            server: ServerSection::default(),
+            workspace: WorkspaceSection::default(),
+            plugins: PluginsSection::default(),
+            synced: None,
+        }
+    }
+}
+
 impl Ns7Config {
+    /// Enrolled configuration: every policy section still gets its full set
+    /// of recommended defaults (and every plugin still starts disabled) -
+    /// enrolling only adds a server relationship, it does not change what a
+    /// fresh standalone file would have looked like. Whatever the server
+    /// actually owns gets applied on the first check-in via
+    /// `apply_synced`/`apply_synced_plugins`.
     pub fn new(host: String, workspace_id: String) -> Self {
         Self {
             standalone_mode: false,
@@ -95,20 +646,16 @@ impl Ns7Config {
                 ..Default::default()
             },
             workspace: WorkspaceSection { id: workspace_id },
-            synced: None,
+            ..Default::default()
         }
     }
 
-    /// The default for a fresh install and the only mode with no required
-    /// fields - matches the standalone-first architecture (README Section 0),
-    /// so a brand new agent never needs to ask anything before it can run.
+    /// The default for a fresh install - matches the standalone-first
+    /// architecture (README Section 0), so a brand new agent never needs to
+    /// ask anything before it can run, and every plugin/policy already has a
+    /// complete, working (if inert - see the doc comment above) configuration.
     pub fn standalone() -> Self {
-        Self {
-            standalone_mode: true,
-            server: ServerSection::default(),
-            workspace: WorkspaceSection::default(),
-            synced: None,
-        }
+        Self::default()
     }
 
     pub fn enrollment_addr(&self) -> String {
@@ -126,13 +673,14 @@ impl Ns7Config {
     }
 
     /// Effective check-in cadence: whatever the server last told us, falling
-    /// back to the built-in default until the first check-in completes.
+    /// back to the locally configured [agent] value until the first
+    /// check-in completes.
     pub fn checkin_interval_secs(&self) -> u64 {
         self.synced
             .as_ref()
             .map(|s| s.checkin_interval_secs)
             .filter(|s| *s > 0)
-            .unwrap_or(1800) as u64
+            .unwrap_or(self.agent.checkin_interval_secs as i64) as u64
     }
 }
 
@@ -187,14 +735,20 @@ pub fn save(config: &Ns7Config) -> anyhow::Result<PathBuf> {
     // non-ASCII punctuation shows up as mojibake in some of those.
     let header = "# Nano Stack 7 client configuration.\n\
                   #\n\
-                  # [server] and [workspace] are yours to edit (or set via the setup dialog,\n\
-                  # or `client.exe --server-host ... --workspace-id ...`).\n\
-                  # [synced] is overwritten from the server on every check-in - don't edit it.\n\n";
+                  # Every plugin ships disabled - turn one on by hand here, or enroll with\n\
+                  # a workspace whose Admin Console enables it. Everything else already has\n\
+                  # a working recommended value; see NS7Conf.reference.toml for what each\n\
+                  # setting does. [synced] is overwritten from the server on every\n\
+                  # check-in when enrolled - don't hand-edit it.\n\n";
     std::fs::write(&path, format!("{header}{}", toml::to_string_pretty(config)?))?;
     Ok(path)
 }
 
-/// Records what the server pushed on a successful check-in.
+/// Records what the server pushed on a successful check-in: the status
+/// mirror in `[synced]`, and (see `apply_synced_plugins`) the actual local
+/// plugin `enabled`/`consent` when this device is enrolled - a workspace's
+/// configuration is meant to win over the standalone file it replaces, not
+/// just be visible alongside it.
 pub fn apply_synced(
     config: &mut Ns7Config,
     server_version: String,
@@ -203,6 +757,13 @@ pub fn apply_synced(
     plugins: Vec<PluginEntry>,
     now_unix: i64,
 ) {
+    apply_synced_plugins(config, &plugins);
+
+    config.managed.active = true;
+    config.managed.last_sync_unix = now_unix;
+    config.managed.server_version = server_version.clone();
+    config.managed.workspace_name = workspace_name.clone();
+
     config.synced = Some(SyncedSection {
         server_version,
         workspace_name,
@@ -210,4 +771,94 @@ pub fn apply_synced(
         last_synced_unix: now_unix,
         plugins,
     });
+}
+
+/// Overwrites each known plugin's `enabled`/`consent` with what the server
+/// just sent. Unconditional once enrolled, per the documented [managed]
+/// contract ("the server owns exactly the sections in owned_sections") -
+/// today `owned_sections` is always empty because the check-in protocol
+/// doesn't carry it yet (see the ManagedSection doc comment), so in practice
+/// this overwrites every plugin the server mentions, every check-in. A
+/// plugin id the server sends that this client doesn't recognize is ignored
+/// rather than erroring, so an older client tolerates a newer server.
+fn apply_synced_plugins(config: &mut Ns7Config, plugins: &[PluginEntry]) {
+    for p in plugins {
+        if !config.plugins.set_by_id(&p.id, p.enabled, &p.consent_tier) {
+            tracing::debug!(plugin_id = %p.id, "server sent an unrecognized plugin id; ignoring");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_standalone_config_has_every_plugin_disabled() {
+        let config = Ns7Config::standalone();
+        assert!(!config.plugins.windows_security_updates.enabled);
+        assert!(!config.plugins.windows_quality_updates.enabled);
+        assert!(!config.plugins.microsoft_365_apps.enabled);
+        assert!(!config.plugins.store_apps.enabled);
+        assert!(!config.plugins.win32_apps.enabled);
+        // Non-enabled fields still carry their recommended defaults.
+        assert_eq!(config.plugins.windows_security_updates.deadline_days, 10);
+        assert_eq!(config.plugins.store_apps.consent, "auto");
+    }
+
+    #[test]
+    fn round_trips_through_toml() {
+        let config = Ns7Config::standalone();
+        let text = toml::to_string_pretty(&config).expect("serialize");
+        let parsed: Ns7Config = toml::from_str(&text).expect("deserialize");
+        assert!(!parsed.plugins.windows_security_updates.enabled);
+        assert_eq!(parsed.agent.scan_interval_secs, 21600);
+    }
+
+    #[test]
+    fn enrolling_overwrites_local_plugin_state() {
+        let mut config = Ns7Config::new("192.168.1.10".to_string(), "ws-123".to_string());
+        assert!(!config.plugins.windows_security_updates.enabled, "starts disabled like any fresh config");
+
+        apply_synced(
+            &mut config,
+            "1.4.0".to_string(),
+            "Acme Corp".to_string(),
+            1800,
+            vec![PluginEntry {
+                id: "windows_security_updates".to_string(),
+                name: "Windows Security Updates".to_string(),
+                enabled: true,
+                consent_tier: "auto".to_string(),
+            }],
+            1_700_000_000,
+        );
+
+        assert!(config.plugins.windows_security_updates.enabled, "workspace config should win over local");
+        assert_eq!(config.plugins.windows_security_updates.consent, "auto");
+        assert!(config.managed.active);
+        assert_eq!(config.managed.workspace_name, "Acme Corp");
+        // A plugin the server said nothing about keeps its local value.
+        assert!(!config.plugins.store_apps.enabled);
+    }
+
+    #[test]
+    fn unknown_plugin_id_from_a_newer_server_is_ignored_not_fatal() {
+        let mut config = Ns7Config::standalone();
+        apply_synced(
+            &mut config,
+            String::new(),
+            String::new(),
+            1800,
+            vec![PluginEntry {
+                id: "windows_feature_updates".to_string(), // not implemented client-side yet
+                name: "Feature Updates".to_string(),
+                enabled: true,
+                consent_tier: "ask".to_string(),
+            }],
+            0,
+        );
+        // Should not panic, and known plugins are unaffected.
+        assert!(!config.plugins.windows_security_updates.enabled);
+    }
 }

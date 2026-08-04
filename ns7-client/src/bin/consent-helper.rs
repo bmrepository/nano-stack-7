@@ -1,3 +1,8 @@
+// Never allocate a console - see the note in tray-helper.rs. The dialog it
+// shows is a real Win32 window regardless; this only suppresses the
+// unrelated black console window Windows would otherwise create for it.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 /// Milestone (d): Consent IPC helper process.
 ///
 /// Deliberately a *separate binary* from the main daemon, per README
@@ -33,8 +38,11 @@ Write-Output $result"#,
         description = description.replace('"', "'")
     );
 
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     match std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
     {
         Ok(o) if String::from_utf8_lossy(&o.stdout).trim() == "Yes" => "accept",

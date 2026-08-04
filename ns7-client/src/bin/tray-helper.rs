@@ -1,3 +1,9 @@
+// Never allocate a console: this runs invisibly for as long as the tray icon
+// exists. Without this, spawning it from a console-less parent (see
+// client.exe's own windows_subsystem fix) would allocate a fresh console of
+// its own instead of inheriting one that no longer exists.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 /// System tray indicator for the Nano Stack 7 client daemon.
 ///
 /// Separate binary, spawned detached by the main daemon at startup — same
@@ -60,7 +66,7 @@ $notifyIcon.Visible = $true
 
 $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
 
-$statusItem = $contextMenu.Items.Add("Status...")
+$statusItem = $contextMenu.Items.Add("Open NS7")
 $statusItem.add_Click({{
     if (Test-Path "{status_helper}") {{
         Start-Process -FilePath "{status_helper}"
@@ -77,7 +83,7 @@ $notifyIcon.add_DoubleClick({{
 
 $contextMenu.Items.Add("-") | Out-Null
 
-$exitItem = $contextMenu.Items.Add("Exit Nano Stack 7 Agent")
+$exitItem = $contextMenu.Items.Add("Exit")
 $exitItem.add_Click({{
     $notifyIcon.Visible = $false
     [System.Windows.Forms.Application]::Exit()
@@ -91,8 +97,18 @@ $notifyIcon.ContextMenuStrip = $contextMenu
             status_helper = status_helper.display(),
         );
 
+        // CREATE_NO_WINDOW, not just -WindowStyle Hidden: on Windows 11 with
+        // Windows Terminal as the default terminal app, -WindowStyle Hidden
+        // alone has been observed to still let a window flash/persist,
+        // since the new terminal host doesn't honor the legacy
+        // wShowWindow hint the same way classic conhost.exe did.
+        // CREATE_NO_WINDOW stops a console from being allocated at all,
+        // regardless of terminal app settings.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let status = std::process::Command::new("powershell")
             .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
             .status();
 
         if let Err(e) = status {
