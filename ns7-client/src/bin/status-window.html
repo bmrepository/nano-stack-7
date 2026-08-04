@@ -248,6 +248,38 @@
   .update-msg.ok { color: var(--ok); }
   .update-msg.warn { color: #b4740a; }
   .update-msg.bad { color: var(--danger); }
+
+  /* ---------- Connection: inline mode editor ---------- */
+  .conn-summary-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .conn-hint { color: var(--text-dim); font-size: 13px; margin: 10px 0 0; }
+
+  .mode-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0 4px; }
+  .mode-option {
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 13px 15px;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background 0.12s ease;
+  }
+  .mode-option:hover { border-color: #c9cdd3; background: #fafbfc; }
+  .mode-option.selected { border-color: var(--accent); background: var(--ok-bg); }
+  .mode-option-title { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+  .mode-option.selected .mode-option-title { color: var(--ok); }
+  .mode-option-desc { font-size: 12px; color: var(--text-dim); line-height: 1.4; }
+
+  .input {
+    display: block;
+    width: 100%;
+    font: inherit;
+    font-size: 13.5px;
+    padding: 8px 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 2px;
+    background: #fff;
+    color: var(--text);
+  }
+  .input:focus { outline: none; border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -276,23 +308,46 @@
     <div class="pages">
       <section id="page-overview" class="page active">
         <p class="section-title">CONNECTION</p>
-        <div class="grid-2">
-          <div class="card">
-            <div class="label">SERVER ADDRESS</div>
-            <div class="value" id="server-host"></div>
-            <div class="label">SERVER VERSION</div>
-            <div class="value" id="server-version"></div>
+
+        <div class="card" id="connection-summary">
+          <div class="conn-summary-row">
+            <div>
+              <div class="label">MODE</div>
+              <div class="value" id="connection-mode-value"></div>
+            </div>
+            <button class="ghost" id="btn-change-connection">Change</button>
           </div>
-          <div class="card">
-            <div class="label">LAST CHECK-IN</div>
-            <div class="value" id="last-checkin"></div>
-            <div class="label">MODE</div>
-            <div class="value" id="mode"></div>
+          <div id="connection-details"></div>
+        </div>
+
+        <div class="card" id="connection-edit" hidden>
+          <p class="hint">Choose how this agent operates.</p>
+          <div class="mode-choice">
+            <div class="mode-option" data-mode="standalone" id="mode-standalone">
+              <div class="mode-option-title">Standalone</div>
+              <div class="mode-option-desc">All features run locally. No server required.</div>
+            </div>
+            <div class="mode-option" data-mode="connect" id="mode-connect">
+              <div class="mode-option-title">Connect to a Workspace</div>
+              <div class="mode-option-desc">Centrally managed by an NS7 Admin Console.</div>
+            </div>
+          </div>
+          <div id="connect-fields" hidden>
+            <div class="label">SERVER ADDRESS</div>
+            <input type="text" class="input" id="input-server-host" placeholder="e.g. 192.168.1.10" />
+            <div class="label">WORKSPACE ID</div>
+            <input type="text" class="input" id="input-workspace-id" placeholder="Copy from the Admin Console" />
+          </div>
+          <div class="update-msg bad" id="connection-error" hidden></div>
+          <div class="update-msg" id="connection-progress" hidden>Applying — restarting agent&hellip;</div>
+          <div class="actions">
+            <button class="primary" id="btn-save-connection">Save</button>
+            <button class="ghost" id="btn-cancel-connection">Cancel</button>
           </div>
         </div>
 
-        <p class="section-title">WORKSPACE</p>
-        <div class="card">
+        <p class="section-title" id="workspace-title">WORKSPACE</p>
+        <div class="card" id="workspace-card">
           <div class="label">NAME</div>
           <div class="value" id="workspace-name"></div>
           <div class="label">WORKSPACE ID</div>
@@ -351,59 +406,203 @@
 </div>
 
 <script>
-  const DATA = __STATUS_JSON__;
+  let DATA = __STATUS_JSON__;
 
   const $ = (id) => document.getElementById(id);
   const dash = (v) => (v === null || v === undefined || v === "" ? "-" : String(v));
 
-  // ---------- Populate ----------
-  const connected = !!DATA.connected;
-  $("conn-pill").classList.add(connected ? "ok" : "bad");
-  $("conn-text").textContent = connected ? "Connected" : "Not connected";
-
-  const mode = DATA.standalone_mode ? "Standalone (local AI only)" : "Server-managed";
-  $("mode").textContent = mode;
-  $("footer-mode").textContent = mode;
-  $("footer-version").textContent = "Agent v" + DATA.client_version;
-  $("client-version").textContent = "v" + DATA.client_version;
-
-  $("server-host").textContent = dash(DATA.server_host);
-  $("server-version").textContent = dash(DATA.server_version);
-  $("workspace-name").textContent = dash(DATA.workspace_name);
-  $("workspace-id").textContent = dash(DATA.workspace_id);
-  $("device-id").textContent = DATA.device_id ? DATA.device_id : "(not enrolled)";
-  $("apps").textContent = DATA.installed_app_count ?? 0;
-  $("findings").textContent = DATA.finding_count ?? 0;
-
-  $("last-checkin").textContent = DATA.last_checkin_unix
-    ? new Date(DATA.last_checkin_unix * 1000).toLocaleString()
-    : "-";
-
-  if (DATA.last_error) {
-    $("last-error").textContent = DATA.last_error;
-    $("error-card").hidden = false;
+  // Builds a `<div class="label">L</div><div class="value">V</div>` pair as
+  // real nodes (not innerHTML) since some of these values - server address,
+  // version - ultimately come from whatever the server says on check-in, and
+  // this way a hostile server can never inject markup into this page.
+  function labelValue(label, value, extraClass) {
+    const l = document.createElement("div");
+    l.className = "label";
+    l.textContent = label;
+    const v = document.createElement("div");
+    v.className = "value" + (extraClass ? " " + extraClass : "");
+    v.textContent = value;
+    return [l, v];
   }
 
-  const rows = DATA.plugins || [];
-  const rowsEl = $("plugin-rows");
-  if (rows.length === 0) {
-    rowsEl.innerHTML = '<div class="empty">No plugins reported yet - waiting for the first check-in.</div>';
-  } else {
-    for (const p of rows) {
-      const div = document.createElement("div");
-      div.className = "table-row";
-      const name = document.createElement("div");
-      name.textContent = p.name;
-      const enabled = document.createElement("div");
-      enabled.className = "enabled";
-      enabled.textContent = p.enabled ? "Yes" : "No";
-      const consent = document.createElement("div");
-      consent.className = "consent";
-      consent.textContent = p.consent_tier;
-      div.append(name, enabled, consent);
-      rowsEl.appendChild(div);
+  // ---------- Render ----------
+  function renderOverview(data) {
+    const standalone = !!data.standalone_mode;
+    const connected = !!data.connected;
+    const hasWorkspace = !!data.workspace_id;
+
+    $("conn-pill").className = "pill " + (standalone || connected ? "ok" : "bad");
+    $("conn-text").textContent = standalone ? "Standalone" : connected ? "Connected" : "Not connected";
+
+    const modeLabel = standalone ? "Standalone" : "Server-managed";
+    $("footer-mode").textContent = modeLabel;
+    $("footer-version").textContent = "Agent v" + data.client_version;
+    $("client-version").textContent = "v" + data.client_version;
+    $("connection-mode-value").textContent = modeLabel;
+
+    const details = $("connection-details");
+    details.innerHTML = "";
+    if (standalone && !hasWorkspace) {
+      const p = document.createElement("p");
+      p.className = "conn-hint";
+      p.textContent = "Running standalone — all features work locally. No server connection.";
+      details.appendChild(p);
+    } else {
+      const grid = document.createElement("div");
+      grid.className = "grid-2";
+      grid.style.marginTop = "12px";
+      const card1 = document.createElement("div");
+      card1.className = "card";
+      card1.append(...labelValue("SERVER ADDRESS", dash(data.server_host)));
+      card1.append(...labelValue("SERVER VERSION", dash(data.server_version)));
+      const card2 = document.createElement("div");
+      card2.className = "card";
+      const lastCheckin = data.last_checkin_unix ? new Date(data.last_checkin_unix * 1000).toLocaleString() : "-";
+      card2.append(...labelValue("LAST CHECK-IN", lastCheckin));
+      grid.append(card1, card2);
+      details.appendChild(grid);
+    }
+
+    const showWorkspace = !standalone || hasWorkspace;
+    $("workspace-title").style.display = showWorkspace ? "" : "none";
+    $("workspace-card").style.display = showWorkspace ? "" : "none";
+    $("workspace-name").textContent = dash(data.workspace_name);
+    $("workspace-id").textContent = dash(data.workspace_id);
+    $("device-id").textContent = data.device_id ? data.device_id : "(not enrolled)";
+
+    $("apps").textContent = data.installed_app_count ?? 0;
+    $("findings").textContent = data.finding_count ?? 0;
+
+    $("error-card").hidden = !data.last_error;
+    if (data.last_error) $("last-error").textContent = data.last_error;
+
+    const rows = data.plugins || [];
+    const rowsEl = $("plugin-rows");
+    rowsEl.innerHTML = "";
+    if (rows.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No plugins reported yet - waiting for the first check-in.";
+      rowsEl.appendChild(empty);
+    } else {
+      for (const p of rows) {
+        const div = document.createElement("div");
+        div.className = "table-row";
+        const name = document.createElement("div");
+        name.textContent = p.name;
+        const enabled = document.createElement("div");
+        enabled.className = "enabled";
+        enabled.textContent = p.enabled ? "Yes" : "No";
+        const consent = document.createElement("div");
+        consent.className = "consent";
+        consent.textContent = p.consent_tier;
+        div.append(name, enabled, consent);
+        rowsEl.appendChild(div);
+      }
     }
   }
+
+  renderOverview(DATA);
+
+  // ---------- Connection: inline mode editor ----------
+  const native = (payload) => window.ipc.postMessage(JSON.stringify(payload));
+
+  let selectedMode = null;
+  let pendingMode = null;
+  let pendingHost = "";
+  let pollTimer = null;
+
+  function selectMode(m) {
+    selectedMode = m;
+    $("mode-standalone").classList.toggle("selected", m === "standalone");
+    $("mode-connect").classList.toggle("selected", m === "connect");
+    $("connect-fields").hidden = m !== "connect";
+  }
+  $("mode-standalone").addEventListener("click", () => selectMode("standalone"));
+  $("mode-connect").addEventListener("click", () => selectMode("connect"));
+
+  function enterEditMode() {
+    $("connection-summary").hidden = true;
+    $("connection-edit").hidden = false;
+    $("connection-error").hidden = true;
+    $("connection-progress").hidden = true;
+    $("btn-save-connection").disabled = false;
+    $("input-server-host").value = DATA.server_host || "";
+    $("input-workspace-id").value = DATA.workspace_id || "";
+    selectMode(DATA.standalone_mode && !DATA.workspace_id ? "standalone" : "connect");
+  }
+  function exitEditMode() {
+    $("connection-edit").hidden = true;
+    $("connection-summary").hidden = false;
+  }
+  $("btn-change-connection").addEventListener("click", enterEditMode);
+  $("btn-cancel-connection").addEventListener("click", exitEditMode);
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    $("connection-progress").hidden = true;
+  }
+
+  function startPolling() {
+    let attempts = 0;
+    pollTimer = setInterval(() => {
+      attempts++;
+      native({ action: "get-status" });
+      if (attempts >= 14) {
+        // ~20s - the daemon should have restarted well before this; if not,
+        // stop asking and let the user look at whatever's on screen now.
+        stopPolling();
+        exitEditMode();
+      }
+    }, 1500);
+  }
+
+  $("btn-save-connection").addEventListener("click", () => {
+    $("connection-error").hidden = true;
+    if (selectedMode === "connect") {
+      const host = $("input-server-host").value.trim();
+      const workspaceId = $("input-workspace-id").value.trim();
+      if (!host || !workspaceId) {
+        $("connection-error").hidden = false;
+        $("connection-error").textContent = "Server address and Workspace ID are both required.";
+        return;
+      }
+      pendingMode = "connect";
+      pendingHost = host;
+      native({ action: "save-connection", mode: "connect", server_host: host, workspace_id: workspaceId });
+    } else {
+      pendingMode = "standalone";
+      pendingHost = "";
+      native({ action: "save-connection", mode: "standalone" });
+    }
+    $("btn-save-connection").disabled = true;
+    $("connection-progress").hidden = false;
+    startPolling();
+  });
+
+  // Called by Rust (evaluate_script) once the daemon restart has been
+  // triggered and fresh status is available.
+  window.__ns7UpdateStatus = function (data) {
+    DATA = data;
+    renderOverview(data);
+    const reachedTarget =
+      (pendingMode === "standalone" && data.standalone_mode) ||
+      (pendingMode === "connect" && !data.standalone_mode && data.server_host === pendingHost);
+    if (pollTimer && reachedTarget) {
+      stopPolling();
+      exitEditMode();
+    }
+  };
+
+  window.__ns7SaveError = function (message) {
+    stopPolling();
+    $("connection-error").hidden = false;
+    $("connection-error").textContent = message;
+    $("btn-save-connection").disabled = false;
+  };
 
   // ---------- Navigation ----------
   const titles = { overview: "Overview", plugins: "Plugins", updates: "Updates" };
@@ -417,9 +616,9 @@
   }
 
   // ---------- Native bridge ----------
-  // Anything needing OS access (opening a file or URL) goes through wry's IPC
-  // to Rust; the page itself does no filesystem or process work.
-  const native = (payload) => window.ipc.postMessage(JSON.stringify(payload));
+  // Anything needing OS access (opening a file or URL, saving the connection
+  // config) goes through wry's IPC to Rust - `native` is defined above,
+  // alongside the Connection editor that was its first user.
   $("btn-config").addEventListener("click", () => native({ action: "open-config" }));
 
   // ---------- Update check ----------

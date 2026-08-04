@@ -5,8 +5,8 @@
   Built and published via .github/workflows/release-client.yml on GitHub's
   windows-latest runner, which ships WiX v3 preinstalled.
 
-  Packages all three binaries (the daemon plus its two helper processes)
-  and the tray icon assets into one installer, since the daemon expects
+  Packages the daemon and its helper processes (tray, consent, status) plus
+  the tray icon assets into one installer, since the daemon expects
   consent-helper.exe/tray-helper.exe/ns7-icon-*.ico to sit alongside it.
 
   **Every `Source`/`SourceFile` path here must use `$(var.CargoTargetBinDir)`.**
@@ -61,9 +61,6 @@
                     </Component>
                     <Component Id='TrayHelperExe' Guid='*' Win64='yes'>
                         <File Id='TrayHelperExe' Name='tray-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\tray-helper.exe' KeyPath='yes'/>
-                    </Component>
-                    <Component Id='SetupHelperExe' Guid='*' Win64='yes'>
-                        <File Id='SetupHelperExe' Name='setup-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\setup-helper.exe' KeyPath='yes'/>
                     </Component>
                     <Component Id='StatusHelperExe' Guid='*' Win64='yes'>
                         <File Id='StatusHelperExe' Name='status-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\status-helper.exe' KeyPath='yes'/>
@@ -126,7 +123,6 @@
             <ComponentRef Id='ClientExe'/>
             <ComponentRef Id='ConsentHelperExe'/>
             <ComponentRef Id='TrayHelperExe'/>
-            <ComponentRef Id='SetupHelperExe'/>
             <ComponentRef Id='StatusHelperExe'/>
             <ComponentRef Id='IconLight'/>
             <ComponentRef Id='IconDark'/>

@@ -24,7 +24,6 @@
                   and again whenever the harness script changes)
     status        Open the agent status window, capture it, dump its controls
     update-check  Same, then click "Check for updates" and capture the result
-    setup         Open the first-run setup dialog and capture it
     tray          Start the agent, then capture the notification area
     screenshot    Just capture the current desktop
     clean         Remove the scheduled task and working files from the dev box
@@ -36,7 +35,7 @@
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("install", "status", "plugins", "update-check", "setup", "tray", "screenshot", "clean")]
+    [ValidateSet("install", "status", "plugins", "update-check", "tray", "screenshot", "clean")]
     [string]$Action,
 
     [string]$DevBoxHost,
@@ -202,15 +201,6 @@ switch ($Action) {
             clickButton           = "Plugins"
             afterClickWaitSeconds = 3
             closeAfter            = $true
-        }
-    }
-
-    "setup" {
-        Invoke-Harness @{
-            exe         = "$RemoteClientDir/setup-helper.exe"
-            windowTitle = "Nano Stack 7 Client Setup"
-            waitSeconds = $WaitSeconds
-            closeAfter  = $true
         }
     }
 

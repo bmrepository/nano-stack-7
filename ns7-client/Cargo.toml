@@ -19,6 +19,14 @@ hostname = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
+# Single-instance mutex (CreateMutexW) and, for the status window, bringing an
+# already-open window to the foreground (FindWindowW/SetForegroundWindow).
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # Cross-platform UI stack, per README Section 2's Windows + macOS goal. These
 # are the libraries Tauri is built on, used directly rather than via Tauri

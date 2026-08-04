@@ -1,23 +1,28 @@
-mod checkin;
 mod cli;
-mod config;
-mod consent;
-mod identity;
-mod inventory;
-mod setup;
-mod status;
-mod tray;
 
+use client::config::{self, Ns7Config};
+use client::status::{self, AgentStatus};
+use client::{identity, single_instance, tray};
 use clap::Parser;
 use cli::Cli;
-use config::Ns7Config;
 use shared_proto::{noise, EnrollmentRequest, EnrollmentResponse};
-use status::AgentStatus;
 use tokio::net::TcpStream;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+
+    // Must come before anything else touches shared state (config, identity,
+    // the tray icon) - a second launch should do nothing at all, not race
+    // the first one.
+    let _lock = match single_instance::acquire(single_instance::DAEMON_LOCK_NAME) {
+        Some(lock) => lock,
+        None => {
+            tracing::info!("another instance of the agent is already running; exiting");
+            return Ok(());
+        }
+    };
+    single_instance::write_pid_file();
 
     let cli = Cli::parse();
     cli.validate()?;
@@ -44,6 +49,20 @@ async fn main() -> anyhow::Result<()> {
         "client configured"
     );
 
+    // Pure standalone (no workspace at all): nothing to enroll against or
+    // check in with. Idle rather than looping an enrollment attempt against
+    // an empty host - the agent is still "running", just with no server
+    // relationship, exactly as the standalone-first architecture intends.
+    if config.standalone_mode && config.workspace.id.is_empty() {
+        tracing::info!("running standalone - no workspace configured; idling");
+        status::write(&AgentStatus {
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            standalone_mode: true,
+            ..Default::default()
+        });
+        std::future::pending::<()>().await;
+    }
+
     if cli.reenroll {
         identity::clear_enrollment()?;
         tracing::info!("cleared saved enrollment (--reenroll)");
@@ -62,7 +81,11 @@ async fn main() -> anyhow::Result<()> {
 
 /// Config resolution order: CLI flags (unattended/scripted enrollment) →
 /// legacy env vars (kept so the existing dev scripts and CI keep working) →
-/// saved NS7Conf.toml → interactive setup dialog on first run.
+/// saved NS7Conf.toml → default to standalone on first run.
+///
+/// There is deliberately no interactive dialog here. Setting up or changing
+/// the connection is done from the status window's Connection card (which
+/// writes NS7Conf.toml and restarts the agent), not by blocking startup.
 fn resolve_config(cli: &Cli) -> anyhow::Result<Ns7Config> {
     let (mut config, persist) = resolve_base_config(cli)?;
 
@@ -113,19 +136,8 @@ fn resolve_base_config(cli: &Cli) -> anyhow::Result<(Ns7Config, bool)> {
         }
     }
 
-    if cli.show_config {
-        // Nothing saved and nothing passed — report that rather than popping a
-        // dialog in response to a read-only query.
-        return Ok((Ns7Config::new(String::new(), String::new()), false));
-    }
-
-    tracing::info!("no configuration found; launching first-run setup");
-    let config = setup::prompt(None).ok_or_else(|| {
-        anyhow::anyhow!(
-            "setup cancelled — provide --server-host and --workspace-id to enroll without the dialog"
-        )
-    })?;
-    Ok((config, true))
+    tracing::info!("no configuration found; defaulting to standalone mode");
+    Ok((Ns7Config::standalone(), true))
 }
 
 fn print_config(config: &Ns7Config) {
@@ -209,7 +221,7 @@ async fn run_checkin_scheduler(
 
     loop {
         let server_addr = config.checkin_addr();
-        let outcome = checkin::run_once(&server_addr, identity_key, &workspace_public_key).await;
+        let outcome = client::checkin::run_once(&server_addr, identity_key, &workspace_public_key).await;
 
         let mut agent_status = AgentStatus {
             client_version: env!("CARGO_PKG_VERSION").to_string(),

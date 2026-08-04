@@ -11,11 +11,10 @@ pub const CONFIG_FILE_NAME: &str = "NS7Conf.toml";
 ///   * `[synced]` — mirrored from whatever the server pushes on each check-in,
 ///     so the effective configuration is inspectable on the device itself.
 ///
-/// `StandaloneMode` is the forward-looking switch for the planned server-less
-/// mode, where the client relies solely on a local AI model and has reduced
-/// capability. Nothing consumes it as `true` yet — it's written now so the
-/// file shape doesn't change when that lands, and so the current mode is
-/// always explicit rather than implied.
+/// `StandaloneMode` is the default for a fresh install: no server, no
+/// workspace, every plugin runs against purely local policy. Switching to
+/// server-managed happens by setting `[server]`/`[workspace]` (from the
+/// status window's Connection card, or `--server-host`/`--workspace-id`).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Ns7Config {
     /// Deliberately PascalCase to match the documented key name.
@@ -100,6 +99,18 @@ impl Ns7Config {
         }
     }
 
+    /// The default for a fresh install and the only mode with no required
+    /// fields - matches the standalone-first architecture (README Section 0),
+    /// so a brand new agent never needs to ask anything before it can run.
+    pub fn standalone() -> Self {
+        Self {
+            standalone_mode: true,
+            server: ServerSection::default(),
+            workspace: WorkspaceSection::default(),
+            synced: None,
+        }
+    }
+
     pub fn enrollment_addr(&self) -> String {
         format!("{}:{}", self.server.host, self.server.enrollment_port)
     }
@@ -108,8 +119,10 @@ impl Ns7Config {
         format!("{}:{}", self.server.host, self.server.checkin_port)
     }
 
+    /// Standalone needs nothing further; server-managed needs both host and
+    /// workspace before it's a usable configuration.
     pub fn is_configured(&self) -> bool {
-        !self.server.host.is_empty() && !self.workspace.id.is_empty()
+        self.standalone_mode || (!self.server.host.is_empty() && !self.workspace.id.is_empty())
     }
 
     /// Effective check-in cadence: whatever the server last told us, falling
@@ -134,6 +147,10 @@ impl Ns7Config {
 pub fn state_dir() -> PathBuf {
     let base = if cfg!(windows) {
         std::env::var("LOCALAPPDATA").ok()
+    } else if cfg!(target_os = "macos") {
+        std::env::var("HOME")
+            .ok()
+            .map(|h| format!("{h}/Library/Application Support"))
     } else {
         std::env::var("HOME").ok().map(|h| format!("{h}/.config"))
     };
