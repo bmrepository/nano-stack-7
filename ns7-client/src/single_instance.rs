@@ -12,6 +12,7 @@
 
 pub const DAEMON_LOCK_NAME: &str = "NanoStack7Agent";
 pub const STATUS_WINDOW_LOCK_NAME: &str = "NanoStack7StatusWindow";
+pub const TRAY_ICON_LOCK_NAME: &str = "NanoStack7TrayIcon";
 
 /// Holding this for the process lifetime is what keeps the lock held;
 /// dropping it releases the lock.

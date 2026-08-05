@@ -11,7 +11,7 @@ mod cli;
 
 use client::config::{self, Ns7Config};
 use client::status::{self, AgentStatus};
-use client::{identity, single_instance, tray};
+use client::{identity, performance, plugins, scan_request, single_instance, tray};
 use clap::Parser;
 use cli::Cli;
 use shared_proto::{noise, EnrollmentRequest, EnrollmentResponse};
@@ -96,6 +96,19 @@ async fn main() -> anyhow::Result<()> {
 
     tray::spawn();
 
+    // Plugin scanning is independent of enrollment - it runs standalone or
+    // enrolled alike, on its own cadence (`[agent].scan_interval_secs`, not
+    // the check-in interval), and reloads config fresh each cycle rather
+    // than sharing the `config` this function owns, so it never races the
+    // check-in loop's own reads/writes of NS7Conf.toml.
+    tokio::spawn(run_plugin_scan_loop());
+
+    // A "Scan Now" click in the status window (a separate process) can't
+    // call into this already-running daemon directly, so it drops a request
+    // file instead - this polls for one and runs it immediately, bypassing
+    // the normal interval/performance gating meant for the unattended cycle.
+    tokio::spawn(run_scan_request_loop());
+
     tracing::info!(
         server_host = %config.server.host,
         workspace_id = %config.workspace.id,
@@ -109,9 +122,14 @@ async fn main() -> anyhow::Result<()> {
     // relationship, exactly as the standalone-first architecture intends.
     if config.standalone_mode && config.workspace.id.is_empty() {
         tracing::info!("running standalone - no workspace configured; idling");
+        // Carries forward whatever the plugin scan loop (already spawned
+        // above) may have written concurrently - this write must not race
+        // it back to an empty plugin_runtime list.
+        let plugin_runtime = status::read().map(|s| s.plugin_runtime).unwrap_or_default();
         status::write(&AgentStatus {
             client_version: env!("CARGO_PKG_VERSION").to_string(),
             standalone_mode: true,
+            plugin_runtime,
             ..Default::default()
         });
         std::future::pending::<()>().await;
@@ -265,6 +283,87 @@ async fn enroll(config: &Ns7Config, identity_key: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Periodic plugin scan/remediate loop - separate from `run_checkin_scheduler`
+/// deliberately, since plugin work happens whether or not this device is
+/// enrolled, on its own cadence. Reloads `NS7Conf.toml` from disk each cycle
+/// (rather than taking a shared `&mut Ns7Config`) so a config change made
+/// through the status window's Connection editor, or a value the check-in
+/// loop just persisted, is picked up on the next tick without any shared
+/// mutable state between the two loops.
+async fn run_plugin_scan_loop() {
+    if let Some(config) = config::load() {
+        let delay = config.agent.startup_scan_delay_minutes as u64 * 60;
+        if delay > 0 {
+            tracing::debug!(delay_secs = delay, "delaying first plugin scan after startup");
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+        }
+    }
+
+    loop {
+        let Some(config) = config::load() else {
+            // No config yet (shouldn't normally happen - resolve_config
+            // always writes one - but a config wiped mid-run shouldn't spin
+            // a tight retry loop) or it failed to parse; try again shortly.
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            continue;
+        };
+
+        let interval = std::time::Duration::from_secs(config.agent.scan_interval_secs as u64);
+
+        if let Some(reason) = performance::should_defer(&config.performance) {
+            tracing::debug!(reason, "plugin scan deferred to next cycle");
+        } else {
+            let user_active = performance::is_user_active(config.performance.idle_threshold_minutes);
+            // Tracked only for `store_apps` (the one plugin `run_all` actually
+            // calls today) so the Plugins page's "last scan" reflects
+            // unattended cycles too, not only a manual "Scan Now" click. The
+            // message here is coarser than `run_one`'s - `run_all` swallows a
+            // per-plugin error into a log line rather than returning it, so a
+            // failed cycle and a clean no-op both read as "no updates were
+            // needed" here; the manual path (`run_scan_request_loop` below)
+            // reports the real outcome, including failures.
+            if config.plugins.store_apps.enabled {
+                status::update_plugin_runtime("store_apps", true, 0, "Scanning...");
+            }
+            let installed = plugins::run_all(&config, user_active).await;
+            if installed > 0 {
+                tracing::info!(installed, "plugin cycle installed updates");
+            }
+            if config.plugins.store_apps.enabled {
+                let result = if installed > 0 {
+                    format!("Scan complete - installed {installed} update(s).")
+                } else {
+                    "Scan complete - no updates were needed.".to_string()
+                };
+                status::update_plugin_runtime("store_apps", false, now_unix(), &result);
+            }
+        }
+
+        tokio::time::sleep(interval).await;
+    }
+}
+
+/// Polls for a "Scan Now" request from the status window every couple of
+/// seconds and runs it immediately, bypassing the normal scan interval and
+/// performance gating in `run_plugin_scan_loop` - an explicit user click
+/// should always run right away, not wait for idle/AC-power conditions meant
+/// for the unattended cycle.
+async fn run_scan_request_loop() {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let Some(plugin_id) = scan_request::take() else { continue };
+        let Some(config) = config::load() else { continue };
+
+        tracing::info!(plugin_id = %plugin_id, "manual scan requested from status window");
+        status::update_plugin_runtime(&plugin_id, true, 0, "Scanning...");
+
+        let user_active = performance::is_user_active(config.performance.idle_threshold_minutes);
+        let result = plugins::run_one(&plugin_id, &config, user_active).await;
+
+        status::update_plugin_runtime(&plugin_id, false, now_unix(), &result);
+    }
+}
+
 async fn run_checkin_scheduler(
     config: &mut Ns7Config,
     identity_key: &[u8],
@@ -277,12 +376,20 @@ async fn run_checkin_scheduler(
         let server_addr = config.checkin_addr();
         let outcome = client::checkin::run_once(&server_addr, identity_key, &workspace_public_key).await;
 
+        // This loop owns connection/inventory fields, not plugin runtime
+        // state (the plugin scan loop and manual "Scan Now" requests do) -
+        // carry it forward so a check-in cycle never wipes out what those
+        // wrote, matching the same "read-modify-write" contract
+        // `status::update_plugin_runtime` uses on the other side.
+        let plugin_runtime = status::read().map(|s| s.plugin_runtime).unwrap_or_default();
+
         let mut agent_status = AgentStatus {
             client_version: env!("CARGO_PKG_VERSION").to_string(),
             device_id: device_id.clone(),
             workspace_id: config.workspace.id.clone(),
             server_host: config.server.host.clone(),
             standalone_mode: config.standalone_mode,
+            plugin_runtime,
             ..Default::default()
         };
 
@@ -307,15 +414,10 @@ async fn run_checkin_scheduler(
                 agent_status.last_checkin_unix = now_unix;
                 agent_status.installed_app_count = result.installed_app_count;
                 agent_status.finding_count = result.finding_count;
-                agent_status.plugins = result
-                    .plugins
-                    .iter()
-                    .map(|p| status::StatusPlugin {
-                        name: p.name.clone(),
-                        enabled: p.enabled,
-                        consent_tier: p.consent_tier.clone(),
-                    })
-                    .collect();
+                // Plugin enabled/consent for the UI now comes straight from
+                // `config.plugins` (just updated by `apply_synced` above),
+                // not a separate copy in status.json - see the doc comment
+                // on `Ns7Config::plugin_summaries`.
             }
             Err(e) => {
                 tracing::warn!(error = %e, "check-in failed, will retry next cycle");
@@ -328,15 +430,6 @@ async fn run_checkin_scheduler(
                     agent_status.workspace_name = s.workspace_name.clone();
                     agent_status.server_version = s.server_version.clone();
                     agent_status.last_checkin_unix = s.last_synced_unix;
-                    agent_status.plugins = s
-                        .plugins
-                        .iter()
-                        .map(|p| status::StatusPlugin {
-                            name: p.name.clone(),
-                            enabled: p.enabled,
-                            consent_tier: p.consent_tier.clone(),
-                        })
-                        .collect();
                 }
                 if let Some(previous) = status::read() {
                     agent_status.installed_app_count = previous.installed_app_count;

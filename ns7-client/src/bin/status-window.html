@@ -201,24 +201,26 @@
   .error-card .label { color: var(--danger); }
   .error-card .value { color: #8e2b21; font-size: 12.5px; }
 
-  /* ---------- Table ---------- */
-  .table { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .table-head, .table-row {
+  /* ---------- Plugins ---------- */
+  .plugin-card + .plugin-card { margin-top: 14px; }
+  .plugin-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .plugin-name { font-size: 15px; font-weight: 600; }
+  .plugin-meta { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .plugin-meta.scanning { color: var(--warn); font-weight: 600; }
+  .plugin-meta.failed { color: var(--danger); }
+  .plugin-details-grid {
     display: grid;
-    grid-template-columns: 1fr 110px 130px;
-    padding: 12px 16px;
-    align-items: center;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px 20px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
   }
-  .table-head {
-    background: #f9fafb;
-    font-size: 10.5px;
-    font-weight: 600;
-    color: var(--text-dim);
-    letter-spacing: 0.05em;
-  }
-  .table-row { border-top: 1px solid #f3f4f6; font-size: 13.5px; }
-  .table-row .enabled { color: var(--ok); }
-  .table-row .consent { color: var(--text-dim); }
+  .plugin-details-grid .label { margin-bottom: 3px; }
+  .plugin-details-grid .value { font-size: 13px; }
+  .plugin-scan-btn { flex-shrink: 0; white-space: nowrap; }
+  button.ghost:disabled { opacity: 0.5; cursor: default; }
+  button.ghost:disabled:hover { background: #fff; }
   .empty { padding: 16px; color: var(--text-faint); font-size: 12.5px; }
 
   .hint { color: var(--text-dim); font-size: 12px; margin: 0 0 12px; }
@@ -291,6 +293,7 @@
     </div>
     <div class="nav-heading">AGENT</div>
     <button class="nav-item active" data-page="overview">Overview</button>
+    <button class="nav-item" data-page="configuration">Configuration</button>
     <button class="nav-item" data-page="plugins">Plugins</button>
     <button class="nav-item" data-page="updates">Updates</button>
     <div class="sidebar-footer">
@@ -307,6 +310,46 @@
 
     <div class="pages">
       <section id="page-overview" class="page active">
+        <p class="section-title">DEVICE</p>
+        <div class="card">
+          <div class="label">DEVICE ID</div>
+          <div class="value mono" id="ov-device-id"></div>
+          <div class="label">AGENT VERSION</div>
+          <div class="value" id="ov-agent-version"></div>
+          <div class="label">MODE</div>
+          <div class="value" id="ov-mode-value"></div>
+        </div>
+
+        <p class="section-title" id="workspace-title">WORKSPACE</p>
+        <div class="card" id="workspace-card">
+          <div class="label">NAME</div>
+          <div class="value" id="workspace-name"></div>
+          <div class="label">WORKSPACE ID</div>
+          <div class="value mono" id="workspace-id"></div>
+        </div>
+
+        <p class="section-title">CONNECTION STATUS</p>
+        <div class="card" id="ov-connection-status"></div>
+
+        <p class="section-title">LAST INVENTORY</p>
+        <div class="grid-2">
+          <div class="card">
+            <div class="label">INSTALLED APPS</div>
+            <div class="value big" id="apps"></div>
+          </div>
+          <div class="card">
+            <div class="label">OPEN FINDINGS</div>
+            <div class="value big warn" id="findings"></div>
+          </div>
+        </div>
+
+        <div class="card error-card" id="error-card" hidden>
+          <div class="label">LAST ERROR</div>
+          <div class="value" id="last-error"></div>
+        </div>
+      </section>
+
+      <section id="page-configuration" class="page">
         <p class="section-title">CONNECTION</p>
 
         <div class="card" id="connection-summary">
@@ -345,44 +388,15 @@
             <button class="ghost" id="btn-cancel-connection">Cancel</button>
           </div>
         </div>
-
-        <p class="section-title" id="workspace-title">WORKSPACE</p>
-        <div class="card" id="workspace-card">
-          <div class="label">NAME</div>
-          <div class="value" id="workspace-name"></div>
-          <div class="label">WORKSPACE ID</div>
-          <div class="value mono" id="workspace-id"></div>
-          <div class="label">DEVICE ID</div>
-          <div class="value mono" id="device-id"></div>
-        </div>
-
-        <p class="section-title">LAST INVENTORY</p>
-        <div class="grid-2">
-          <div class="card">
-            <div class="label">INSTALLED APPS</div>
-            <div class="value big" id="apps"></div>
-          </div>
-          <div class="card">
-            <div class="label">OPEN FINDINGS</div>
-            <div class="value big warn" id="findings"></div>
-          </div>
-        </div>
-
-        <div class="card error-card" id="error-card" hidden>
-          <div class="label">LAST ERROR</div>
-          <div class="value" id="last-error"></div>
-        </div>
       </section>
 
       <section id="page-plugins" class="page">
         <p class="section-title">ENABLED PLUGINS</p>
-        <p class="hint">Pushed down by the server on each check-in and mirrored into NS7Conf.toml.</p>
-        <div class="table">
-          <div class="table-head">
-            <div>PLUGIN</div><div>ENABLED</div><div>CONSENT TIER</div>
-          </div>
-          <div id="plugin-rows"></div>
-        </div>
+        <p class="hint">
+          Turned on locally in NS7Conf.toml, or by a workspace's Admin Console. Disabled plugins
+          aren't shown here - there's nothing to scan or report until one is turned on.
+        </p>
+        <div id="plugin-list"></div>
       </section>
 
       <section id="page-updates" class="page">
@@ -426,6 +440,38 @@
   }
 
   // ---------- Render ----------
+
+  // Shared between the Configuration page's connection card (which also
+  // needs the "Change" button and edit flow next to it) and the Overview
+  // dashboard's read-only status card - same underlying facts, two places
+  // that want to show them without duplicating the rendering logic.
+  function buildConnectionDetails(data) {
+    const standalone = !!data.standalone_mode;
+    const hasWorkspace = !!data.workspace_id;
+    const frag = document.createDocumentFragment();
+    if (standalone && !hasWorkspace) {
+      const p = document.createElement("p");
+      p.className = "conn-hint";
+      p.textContent = "Running standalone — all features work locally. No server connection.";
+      frag.appendChild(p);
+    } else {
+      const grid = document.createElement("div");
+      grid.className = "grid-2";
+      grid.style.marginTop = "12px";
+      const card1 = document.createElement("div");
+      card1.className = "card";
+      card1.append(...labelValue("SERVER ADDRESS", dash(data.server_host)));
+      card1.append(...labelValue("SERVER VERSION", dash(data.server_version)));
+      const card2 = document.createElement("div");
+      card2.className = "card";
+      const lastCheckin = data.last_checkin_unix ? new Date(data.last_checkin_unix * 1000).toLocaleString() : "-";
+      card2.append(...labelValue("LAST CHECK-IN", lastCheckin));
+      grid.append(card1, card2);
+      frag.appendChild(grid);
+    }
+    return frag;
+  }
+
   function renderOverview(data) {
     const standalone = !!data.standalone_mode;
     const connected = !!data.connected;
@@ -442,67 +488,142 @@
 
     const details = $("connection-details");
     details.innerHTML = "";
-    if (standalone && !hasWorkspace) {
-      const p = document.createElement("p");
-      p.className = "conn-hint";
-      p.textContent = "Running standalone — all features work locally. No server connection.";
-      details.appendChild(p);
-    } else {
-      const grid = document.createElement("div");
-      grid.className = "grid-2";
-      grid.style.marginTop = "12px";
-      const card1 = document.createElement("div");
-      card1.className = "card";
-      card1.append(...labelValue("SERVER ADDRESS", dash(data.server_host)));
-      card1.append(...labelValue("SERVER VERSION", dash(data.server_version)));
-      const card2 = document.createElement("div");
-      card2.className = "card";
-      const lastCheckin = data.last_checkin_unix ? new Date(data.last_checkin_unix * 1000).toLocaleString() : "-";
-      card2.append(...labelValue("LAST CHECK-IN", lastCheckin));
-      grid.append(card1, card2);
-      details.appendChild(grid);
-    }
+    details.appendChild(buildConnectionDetails(data));
 
     const showWorkspace = !standalone || hasWorkspace;
     $("workspace-title").style.display = showWorkspace ? "" : "none";
     $("workspace-card").style.display = showWorkspace ? "" : "none";
     $("workspace-name").textContent = dash(data.workspace_name);
     $("workspace-id").textContent = dash(data.workspace_id);
-    $("device-id").textContent = data.device_id ? data.device_id : "(not enrolled)";
+
+    // ---- Overview dashboard (read-only) ----
+    $("ov-device-id").textContent = data.device_id ? data.device_id : "(not enrolled)";
+    $("ov-agent-version").textContent = "v" + data.client_version;
+    $("ov-mode-value").textContent = modeLabel;
+
+    const ovStatus = $("ov-connection-status");
+    ovStatus.innerHTML = "";
+    const statusRow = document.createElement("div");
+    statusRow.className = "conn-summary-row";
+    const statusLeft = document.createElement("div");
+    statusLeft.append(...labelValue("STATUS", standalone ? "Standalone" : connected ? "Connected" : "Not connected"));
+    statusRow.appendChild(statusLeft);
+    ovStatus.appendChild(statusRow);
+    ovStatus.appendChild(buildConnectionDetails(data));
 
     $("apps").textContent = data.installed_app_count ?? 0;
     $("findings").textContent = data.finding_count ?? 0;
 
     $("error-card").hidden = !data.last_error;
     if (data.last_error) $("last-error").textContent = data.last_error;
+  }
 
-    const rows = data.plugins || [];
-    const rowsEl = $("plugin-rows");
-    rowsEl.innerHTML = "";
-    if (rows.length === 0) {
+  // ---------- Plugins ----------
+  function timeAgo(unixSeconds) {
+    if (!unixSeconds) return "never";
+    const mins = Math.round((Date.now() - unixSeconds * 1000) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + " minute" + (mins === 1 ? "" : "s") + " ago";
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs + " hour" + (hrs === 1 ? "" : "s") + " ago";
+    const days = Math.round(hrs / 24);
+    return days + " day" + (days === 1 ? "" : "s") + " ago";
+  }
+
+  let pluginPollTimer = null;
+
+  // Started right after a "Scan Now" click. The push comes back through the
+  // same window.__ns7UpdateStatus channel the connection editor already
+  // uses - see the poll-until-settled note there for why this is a poll
+  // rather than a push from the daemon (status.json is the only channel,
+  // and this process doesn't watch it for changes).
+  function startPluginPolling() {
+    if (pluginPollTimer) return;
+    let attempts = 0;
+    pluginPollTimer = setInterval(() => {
+      attempts++;
+      native({ action: "get-status" });
+      // ~60s ceiling - long enough for a real winget install, short enough
+      // that a stuck/failed scan doesn't poll forever in the background.
+      if (attempts >= 40) stopPluginPolling();
+    }, 1500);
+  }
+  function stopPluginPolling() {
+    if (pluginPollTimer) {
+      clearInterval(pluginPollTimer);
+      pluginPollTimer = null;
+    }
+  }
+
+  function renderPlugins(data) {
+    const list = $("plugin-list");
+    list.innerHTML = "";
+    const plugins = data.plugins || [];
+
+    if (plugins.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = "No plugins reported yet - waiting for the first check-in.";
-      rowsEl.appendChild(empty);
-    } else {
-      for (const p of rows) {
-        const div = document.createElement("div");
-        div.className = "table-row";
-        const name = document.createElement("div");
-        name.textContent = p.name;
-        const enabled = document.createElement("div");
-        enabled.className = "enabled";
-        enabled.textContent = p.enabled ? "Yes" : "No";
-        const consent = document.createElement("div");
-        consent.className = "consent";
-        consent.textContent = p.consent_tier;
-        div.append(name, enabled, consent);
-        rowsEl.appendChild(div);
+      empty.textContent = "No plugins are enabled on this device yet.";
+      list.appendChild(empty);
+      return;
+    }
+
+    for (const p of plugins) {
+      const card = document.createElement("div");
+      card.className = "card plugin-card";
+
+      const head = document.createElement("div");
+      head.className = "plugin-card-head";
+
+      const left = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "plugin-name";
+      name.textContent = p.name;
+      const meta = document.createElement("div");
+      const failed = !p.scanning && /fail/i.test(p.last_result || "");
+      meta.className = "plugin-meta" + (p.scanning ? " scanning" : failed ? " failed" : "");
+      const statusText = p.scanning
+        ? "Scanning…"
+        : p.last_result
+        ? p.last_result + " · " + timeAgo(p.last_scan_unix)
+        : "Never scanned";
+      meta.textContent = "Consent: " + p.consent + " · " + statusText;
+      left.append(name, meta);
+
+      const btn = document.createElement("button");
+      btn.className = p.has_runtime ? "primary plugin-scan-btn" : "ghost plugin-scan-btn";
+      btn.textContent = p.scanning ? "Scanning…" : "Scan Now";
+      if (p.has_runtime) {
+        btn.disabled = !!p.scanning;
+        btn.addEventListener("click", () => {
+          btn.disabled = true;
+          btn.textContent = "Scanning…";
+          meta.className = "plugin-meta scanning";
+          meta.textContent = "Consent: " + p.consent + " · Scanning…";
+          native({ action: "scan-now", plugin_id: p.id });
+          startPluginPolling();
+        });
+      } else {
+        btn.disabled = true;
+        btn.title = "This plugin doesn't have an automatic scan implementation yet.";
       }
+      head.append(left, btn);
+
+      const grid = document.createElement("div");
+      grid.className = "plugin-details-grid";
+      for (const d of p.details || []) {
+        const wrap = document.createElement("div");
+        wrap.append(...labelValue(d.label.toUpperCase(), d.value));
+        grid.appendChild(wrap);
+      }
+
+      card.append(head, grid);
+      list.appendChild(card);
     }
   }
 
   renderOverview(DATA);
+  renderPlugins(DATA);
 
   // ---------- Connection: inline mode editor ----------
   const native = (payload) => window.ipc.postMessage(JSON.stringify(payload));
@@ -588,6 +709,7 @@
   window.__ns7UpdateStatus = function (data) {
     DATA = data;
     renderOverview(data);
+    renderPlugins(data);
     const reachedTarget =
       (pendingMode === "standalone" && data.standalone_mode) ||
       (pendingMode === "connect" && !data.standalone_mode && data.server_host === pendingHost);
@@ -595,6 +717,8 @@
       stopPolling();
       exitEditMode();
     }
+    const anyScanning = (data.plugins || []).some((p) => p.scanning);
+    if (pluginPollTimer && !anyScanning) stopPluginPolling();
   };
 
   window.__ns7SaveError = function (message) {
@@ -605,7 +729,7 @@
   };
 
   // ---------- Navigation ----------
-  const titles = { overview: "Overview", plugins: "Plugins", updates: "Updates" };
+  const titles = { overview: "Overview", configuration: "Configuration", plugins: "Plugins", updates: "Updates" };
   for (const btn of document.querySelectorAll(".nav-item")) {
     btn.addEventListener("click", () => {
       const page = btn.dataset.page;

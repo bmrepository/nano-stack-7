@@ -65,11 +65,20 @@
                     <Component Id='StatusHelperExe' Guid='*' Win64='yes'>
                         <File Id='StatusHelperExe' Name='status-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\status-helper.exe' KeyPath='yes'/>
                     </Component>
+                    <Component Id='NotifyHelperExe' Guid='*' Win64='yes'>
+                        <File Id='NotifyHelperExe' Name='notify-helper.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\notify-helper.exe' KeyPath='yes'/>
+                    </Component>
                     <Component Id='IconLight' Guid='*' Win64='yes'>
                         <File Id='IconLightFile' Name='ns7-icon-light.ico' DiskId='1' Source='$(var.CargoTargetBinDir)\ns7-icon-light.ico' KeyPath='yes'/>
                     </Component>
                     <Component Id='IconDark' Guid='*' Win64='yes'>
                         <File Id='IconDarkFile' Name='ns7-icon-dark.ico' DiskId='1' Source='$(var.CargoTargetBinDir)\ns7-icon-dark.ico' KeyPath='yes'/>
+                    </Component>
+                    <Component Id='NotifyIconPng' Guid='*' Win64='yes'>
+                        <!-- Toast appLogoOverride image - see notify-helper.rs. Toast
+                             images need PNG/JPG/GIF; the .ico files above aren't valid
+                             for this element. -->
+                        <File Id='NotifyIconPngFile' Name='notify-icon.png' DiskId='1' Source='$(var.CargoTargetBinDir)\notify-icon.png' KeyPath='yes'/>
                     </Component>
                 </Directory>
             </Directory>
@@ -124,8 +133,10 @@
             <ComponentRef Id='ConsentHelperExe'/>
             <ComponentRef Id='TrayHelperExe'/>
             <ComponentRef Id='StatusHelperExe'/>
+            <ComponentRef Id='NotifyHelperExe'/>
             <ComponentRef Id='IconLight'/>
             <ComponentRef Id='IconDark'/>
+            <ComponentRef Id='NotifyIconPng'/>
             <ComponentRef Id='StartMenuShortcut'/>
             <ComponentRef Id='StartupShortcut'/>
         </Feature>

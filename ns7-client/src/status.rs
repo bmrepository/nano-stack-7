@@ -24,14 +24,20 @@ pub struct AgentStatus {
     pub last_error: String,
     pub installed_app_count: usize,
     pub finding_count: usize,
-    pub plugins: Vec<StatusPlugin>,
+    /// Per-plugin scan/remediate runtime state, keyed by plugin id. Whether a
+    /// plugin is *enabled* and how it's *configured* both live in
+    /// `Ns7Config`/`NS7Conf.toml` (config is authoritative, not this file) -
+    /// this only carries what config alone can't know: whether a scan ran,
+    /// when, and what happened.
+    pub plugin_runtime: Vec<PluginRuntime>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct StatusPlugin {
-    pub name: String,
-    pub enabled: bool,
-    pub consent_tier: String,
+pub struct PluginRuntime {
+    pub id: String,
+    pub scanning: bool,
+    pub last_scan_unix: i64,
+    pub last_result: String,
 }
 
 pub fn status_path() -> PathBuf {
@@ -61,4 +67,30 @@ pub fn write(status: &AgentStatus) {
         }
         Err(e) => tracing::warn!(error = %e, "could not serialize status"),
     }
+}
+
+/// Read-modify-write a single plugin's runtime entry, leaving every other
+/// field of the snapshot untouched. Needed because two independent loops
+/// write this file - the check-in scheduler (which owns connection/inventory
+/// fields) and the plugin scan loop / a manual "Scan Now" request (which
+/// only knows about the one plugin it just ran) - and a plain overwrite from
+/// either side would erase whatever the other last wrote.
+pub fn update_plugin_runtime(plugin_id: &str, scanning: bool, last_scan_unix: i64, last_result: &str) {
+    let mut status = read().unwrap_or_default();
+    match status.plugin_runtime.iter_mut().find(|r| r.id == plugin_id) {
+        Some(entry) => {
+            entry.scanning = scanning;
+            if last_scan_unix > 0 {
+                entry.last_scan_unix = last_scan_unix;
+            }
+            entry.last_result = last_result.to_string();
+        }
+        None => status.plugin_runtime.push(PluginRuntime {
+            id: plugin_id.to_string(),
+            scanning,
+            last_scan_unix,
+            last_result: last_result.to_string(),
+        }),
+    }
+    write(&status);
 }

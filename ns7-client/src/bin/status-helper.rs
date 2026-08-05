@@ -48,6 +48,21 @@ fn main() {
     }
 }
 
+/// One plugin's card worth of data for the Plugins page: config-derived
+/// facts (`client::config::PluginSummary`) merged with whatever the daemon's
+/// last scan wrote (`client::status::PluginRuntime`), keyed by plugin id.
+#[derive(Serialize, Default)]
+struct PluginViewModel {
+    id: String,
+    name: String,
+    consent: String,
+    details: Vec<client::config::PluginDetail>,
+    has_runtime: bool,
+    scanning: bool,
+    last_scan_unix: i64,
+    last_result: String,
+}
+
 /// Everything the page renders. Assembled here so the HTML never touches the
 /// filesystem - it receives one JSON blob and nothing else.
 #[derive(Serialize, Default)]
@@ -65,7 +80,7 @@ struct ViewModel {
     last_error: String,
     installed_app_count: usize,
     finding_count: usize,
-    plugins: Vec<serde_json::Value>,
+    plugins: Vec<PluginViewModel>,
 }
 
 fn view_model() -> ViewModel {
@@ -75,45 +90,64 @@ fn view_model() -> ViewModel {
         ..Default::default()
     };
 
-    // A missing or unreadable status file is normal (agent never started, or
-    // is idling in pure standalone mode), so render the empty/standalone
-    // state rather than failing.
-    if let Some(cfg) = config::load() {
+    // A missing config is normal on a fresh install before the daemon's
+    // first run has written one - render the empty state rather than
+    // failing. `cfg` is authoritative for every config-shaped field
+    // (standalone_mode/server_host/workspace_id/the plugin list itself) -
+    // status.json can lag behind it for a while after a save (it's written
+    // by whichever daemon process happens to be running, and a restart
+    // takes a moment), so it must never override these.
+    let cfg = config::load();
+    if let Some(cfg) = &cfg {
         vm.standalone_mode = cfg.standalone_mode;
         vm.workspace_id = cfg.workspace.id.clone();
         vm.server_host = cfg.server.host.clone();
     }
 
-    let Ok(text) = std::fs::read_to_string(config::state_dir().join("status.json")) else {
-        return vm;
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return vm;
-    };
+    // A missing/unreadable status file is normal too (agent never started,
+    // or is idling in pure standalone mode with no workspace) - everything
+    // below just keeps its zero value in that case.
+    let status = client::status::read();
+    if let Some(s) = &status {
+        vm.connected = s.connected;
+        vm.device_id = s.device_id.clone();
+        vm.workspace_name = s.workspace_name.clone();
+        vm.server_version = s.server_version.clone();
+        vm.last_error = s.last_error.clone();
+        vm.last_checkin_unix = s.last_checkin_unix;
+        vm.installed_app_count = s.installed_app_count;
+        vm.finding_count = s.finding_count;
+    }
 
-    // standalone_mode/server_host/workspace_id are configuration, not runtime
-    // state - NS7Conf.toml (already applied above) is the authoritative,
-    // just-written source for them. status.json can lag behind it for a
-    // while after a save (it's written by whichever daemon process happens
-    // to be running, and a restart takes a moment), so it must never
-    // override these three - only contribute genuine runtime fields.
-    let s = |key: &str| json.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
-    vm.connected = json.get("connected").and_then(|v| v.as_bool()).unwrap_or(false);
-    vm.device_id = s("device_id");
-    vm.workspace_name = s("workspace_name");
-    vm.server_version = s("server_version");
-    vm.last_error = s("last_error");
-    vm.last_checkin_unix = json.get("last_checkin_unix").and_then(|v| v.as_i64()).unwrap_or(0);
-    vm.installed_app_count = json
-        .get("installed_app_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
-    vm.finding_count = json.get("finding_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    vm.plugins = json
-        .get("plugins")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    if let Some(cfg) = &cfg {
+        let runtime_by_id: std::collections::HashMap<&str, &client::status::PluginRuntime> = status
+            .as_ref()
+            .map(|s| s.plugin_runtime.iter().map(|r| (r.id.as_str(), r)).collect())
+            .unwrap_or_default();
+
+        // Only enabled plugins are shown - a disabled plugin has nothing to
+        // scan and nothing to report, and cluttering the page with four
+        // permanently-off cards would bury the ones that actually matter.
+        vm.plugins = cfg
+            .plugin_summaries()
+            .into_iter()
+            .filter(|p| p.enabled)
+            .map(|p| {
+                let rt = runtime_by_id.get(p.id.as_str());
+                PluginViewModel {
+                    scanning: rt.map(|r| r.scanning).unwrap_or(false),
+                    last_scan_unix: rt.map(|r| r.last_scan_unix).unwrap_or(0),
+                    last_result: rt.map(|r| r.last_result.clone()).unwrap_or_default(),
+                    id: p.id,
+                    name: p.name,
+                    consent: p.consent,
+                    details: p.details,
+                    has_runtime: p.has_runtime,
+                }
+            })
+            .collect();
+    }
+
     vm
 }
 
@@ -189,7 +223,22 @@ fn handle_ipc(body: &str, webview_cell: &std::rc::Rc<std::cell::RefCell<Option<w
         }
         Some("save-connection") => save_connection(&msg, webview_cell),
         Some("get-status") => push_status(webview_cell),
+        Some("scan-now") => scan_now(&msg),
         other => eprintln!("status-helper: unknown IPC action: {other:?}"),
+    }
+}
+
+/// Drops a request file the running daemon polls for - see
+/// `client::scan_request` for why this goes through a file rather than a
+/// direct call, and `client::plugins::run_one` for what actually runs.
+/// Fire-and-forget: the page finds out what happened the same way it does
+/// for a connection-save, by polling `get-status` and watching for
+/// `scanning` to flip back to false.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn scan_now(msg: &serde_json::Value) {
+    match msg.get("plugin_id").and_then(|v| v.as_str()) {
+        Some(plugin_id) => client::scan_request::request(plugin_id),
+        None => eprintln!("status-helper: scan-now message missing plugin_id"),
     }
 }
 

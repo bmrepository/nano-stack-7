@@ -11,12 +11,20 @@ const DEFAULT_CONSENT_TIMEOUT_SECS: u64 = 60;
 /// under a non-interactive session) or nobody responds in time, this
 /// degrades to "declined" rather than blocking the daemon forever.
 pub async fn request(finding: &Finding) -> bool {
+    request_description(&finding.description).await
+}
+
+/// Same consent flow, for callers with no server-driven `Finding` to hand
+/// over - the standalone plugin runtime (e.g. `plugins::store_apps`) has no
+/// server and therefore nothing shaped like a `Finding`, but still needs to
+/// ask before acting when a plugin's `consent = "ask"`.
+pub async fn request_description(description: &str) -> bool {
     let timeout_secs = std::env::var("CONSENT_TIMEOUT_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_CONSENT_TIMEOUT_SECS);
 
-    match tokio::time::timeout(Duration::from_secs(timeout_secs), run_helper(finding)).await {
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), run_helper(description)).await {
         Ok(Ok(true)) => true,
         Ok(Ok(false)) => false,
         Ok(Err(e)) => {
@@ -30,11 +38,11 @@ pub async fn request(finding: &Finding) -> bool {
     }
 }
 
-async fn run_helper(finding: &Finding) -> anyhow::Result<bool> {
+async fn run_helper(description: &str) -> anyhow::Result<bool> {
     let helper_path = helper_binary_path()?;
 
     let output = Command::new(helper_path)
-        .env("NANO_STACK_7_FINDING_DESCRIPTION", &finding.description)
+        .env("NANO_STACK_7_FINDING_DESCRIPTION", description)
         .output()
         .await?;
 

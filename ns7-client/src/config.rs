@@ -534,6 +534,8 @@ pub struct StoreAppsPlugin {
     pub pinned: Vec<PinnedPackage>,
     pub delay_days: u32,
     pub max_updates_per_window: u32,
+    #[serde(default)]
+    pub notifications: StoreAppsNotifications,
 }
 
 impl Default for StoreAppsPlugin {
@@ -550,6 +552,69 @@ impl Default for StoreAppsPlugin {
             pinned: Vec::new(),
             delay_days: 3,
             max_updates_per_window: 10,
+            notifications: StoreAppsNotifications::default(),
+        }
+    }
+}
+
+/// Per-plugin notification control, layered on top of the global
+/// `[notifications]` policy rather than replacing it.
+///
+/// **Design, since this genuinely needs explaining rather than just typing
+/// out fields:**
+///
+/// `mode` decides which *categories* of event this plugin is allowed to
+/// notify for at all:
+///   - `"inherit"` (default) - defer to the global `[notifications].level`
+///     (`"all"` / `"failures_only"` / `"none"`), same as every other plugin.
+///   - `"all"` / `"failures_only"` / `"silent"` - override the global policy
+///     for this plugin specifically. `"silent"` is a hard mute: nothing from
+///     this plugin ever shows a toast, including failures - use it for a
+///     machine where store-app churn is expected and uninteresting (a
+///     kiosk, a demo box), not as the general-purpose "quiet" setting
+///     (that's `only_when_active` below, which mutes *when* rather than
+///     *whether*).
+///
+/// The four `on_*` booleans then pick which individual events fire *within*
+/// whatever `mode` allows - e.g. `mode = "all"` with `on_check_started =
+/// false` still skips the (genuinely noisy, off by default) "checking for
+/// updates" toast while keeping availability/installed/failure toasts.
+/// `on_update_failed` has no corresponding "hide failures" path other than
+/// `mode = "silent"` - a failed update is the one thing users consistently
+/// want to know about even when everything else is muted, mirroring why the
+/// global default is `failures_only` rather than `none`.
+///
+/// `only_when_active`: a toast shown while the user is away or idle doesn't
+/// get seen when it happens - it just sits in Action Center until they
+/// return, by which point "an update is available" may already be stale
+/// ("update installed" landing after the fact is still useful; "checking"
+/// never is). Reuses the same idle signal `[performance].idle_threshold_minutes`
+/// already needs for scan gating, so this isn't new machinery, just a
+/// second consumer of it. Failures are the one category exempt from this -
+/// see `should_notify`.
+///
+/// Not something this needs to implement: Windows' native toast pipeline
+/// already respects Focus Assist/quiet hours on its own, since these are
+/// real `Windows.UI.Notifications` toasts, not a custom overlay window.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StoreAppsNotifications {
+    pub mode: String,
+    pub on_check_started: bool,
+    pub on_update_available: bool,
+    pub on_update_installed: bool,
+    pub on_update_failed: bool,
+    pub only_when_active: bool,
+}
+
+impl Default for StoreAppsNotifications {
+    fn default() -> Self {
+        Self {
+            mode: "inherit".to_string(),
+            on_check_started: false,
+            on_update_available: true,
+            on_update_installed: true,
+            on_update_failed: true,
+            only_when_active: true,
         }
     }
 }
@@ -682,6 +747,211 @@ impl Ns7Config {
             .filter(|s| *s > 0)
             .unwrap_or(self.agent.checkin_interval_secs as i64) as u64
     }
+
+    /// Resolves whether a `[plugins.store_apps]` event should show a toast,
+    /// combining the global `[notifications]` policy, this plugin's own
+    /// `mode`/per-event overrides, and whether the user is currently active
+    /// - see the doc comment on `StoreAppsNotifications` for the reasoning.
+    pub fn should_notify_store_apps(&self, event: StoreAppsEvent, user_active: bool) -> bool {
+        let n = &self.plugins.store_apps.notifications;
+
+        if n.mode == "silent" {
+            return false;
+        }
+
+        let category_allowed = match n.mode.as_str() {
+            "all" => true,
+            "failures_only" => event == StoreAppsEvent::UpdateFailed,
+            // "inherit" (or anything unrecognized - fail toward the safer,
+            // quieter global default rather than an unbounded custom value).
+            _ => match self.notifications.level.as_str() {
+                "all" => true,
+                "failures_only" => event == StoreAppsEvent::UpdateFailed,
+                _ => false,
+            },
+        };
+        if !category_allowed {
+            return false;
+        }
+
+        let event_allowed = match event {
+            StoreAppsEvent::CheckStarted => n.on_check_started,
+            StoreAppsEvent::UpdateAvailable => n.on_update_available,
+            StoreAppsEvent::UpdateInstalled => n.on_update_installed,
+            StoreAppsEvent::UpdateFailed => n.on_update_failed,
+        };
+        if !event_allowed {
+            return false;
+        }
+
+        // Failures are worth surfacing even to an empty desk - they're still
+        // relevant when the user gets back, unlike a stale "checking..." or
+        // "available" toast. Everything else waits for the user to be there.
+        user_active || event == StoreAppsEvent::UpdateFailed
+    }
+
+    /// One summary per plugin, in a fixed display order (the one plugin with
+    /// a real runtime - `store_apps` - first, since it's the one a "Scan Now"
+    /// button actually does something for). Built straight from this config,
+    /// the same "config is authoritative for config-shaped fields" rule
+    /// `status-helper` already applies to `standalone_mode`/`server_host` -
+    /// so the status window's Plugins page works correctly even in pure
+    /// standalone mode, which never touches the check-in/server code path
+    /// that used to be the only thing populating a plugin list for the UI.
+    pub fn plugin_summaries(&self) -> Vec<PluginSummary> {
+        let sa = &self.plugins.store_apps;
+        let mut store_apps_details = vec![
+            detail(
+                "Source",
+                match sa.update_source.as_str() {
+                    "winget" => "Winget only".to_string(),
+                    "msstore" => "Microsoft Store only".to_string(),
+                    _ => "Winget + Microsoft Store".to_string(),
+                },
+            ),
+            detail(
+                "Scope",
+                if sa.update_all {
+                    "All installed apps".to_string()
+                } else {
+                    format!("{} app(s) included", sa.include.len())
+                },
+            ),
+            detail("Max updates per window", sa.max_updates_per_window.to_string()),
+        ];
+        if !sa.exclude.is_empty() {
+            store_apps_details.push(detail("Excluded", format!("{} app(s)", sa.exclude.len())));
+        }
+        if !sa.pinned.is_empty() {
+            store_apps_details.push(detail("Pinned", format!("{} app(s)", sa.pinned.len())));
+        }
+
+        let wsu = &self.plugins.windows_security_updates;
+        let wsu_details = vec![
+            detail("Update source", display_update_source(&wsu.update_source, &wsu.wsus_server)),
+            detail("Deadline", format!("{} days", wsu.deadline_days)),
+            detail(
+                "Severity filter",
+                if wsu.severity_filter.is_empty() { "All".to_string() } else { wsu.severity_filter.join(", ") },
+            ),
+            detail("Auto-reboot after deadline", yes_no(wsu.auto_reboot_after_deadline)),
+        ];
+
+        let wqu = &self.plugins.windows_quality_updates;
+        let wqu_details = vec![
+            detail("Update source", wqu.update_source.replace('_', " ")),
+            detail("Deadline", format!("{} days", wqu.deadline_days)),
+            detail("Include drivers", yes_no(wqu.include_drivers)),
+        ];
+
+        let m365 = &self.plugins.microsoft_365_apps;
+        let m365_details = vec![
+            detail("Update channel", m365.update_channel.replace('_', " ")),
+            detail("Deadline", format!("{} days", m365.deadline_days)),
+            detail("Rollback enabled", yes_no(m365.rollback_enabled)),
+        ];
+
+        let w32 = &self.plugins.win32_apps;
+        let w32_details = vec![
+            detail("Architecture", w32.architecture.clone()),
+            detail("Applications configured", w32.applications.len().to_string()),
+            detail("Install timeout", format!("{} min", w32.install_timeout_minutes)),
+        ];
+
+        vec![
+            PluginSummary {
+                id: "store_apps".to_string(),
+                name: "Microsoft Store Apps".to_string(),
+                enabled: sa.enabled,
+                consent: sa.consent.clone(),
+                details: store_apps_details,
+                // The only plugin with a real scan/remediate implementation
+                // today - see the doc comment on `plugins::run_all`.
+                has_runtime: true,
+            },
+            PluginSummary {
+                id: "windows_security_updates".to_string(),
+                name: "Windows Security Updates".to_string(),
+                enabled: wsu.enabled,
+                consent: wsu.consent.clone(),
+                details: wsu_details,
+                has_runtime: false,
+            },
+            PluginSummary {
+                id: "windows_quality_updates".to_string(),
+                name: "Windows Quality Updates".to_string(),
+                enabled: wqu.enabled,
+                consent: wqu.consent.clone(),
+                details: wqu_details,
+                has_runtime: false,
+            },
+            PluginSummary {
+                id: "microsoft_365_apps".to_string(),
+                name: "Microsoft 365 Apps".to_string(),
+                enabled: m365.enabled,
+                consent: m365.consent.clone(),
+                details: m365_details,
+                has_runtime: false,
+            },
+            PluginSummary {
+                id: "win32_apps".to_string(),
+                name: "Win32 Apps".to_string(),
+                enabled: w32.enabled,
+                consent: w32.consent.clone(),
+                details: w32_details,
+                has_runtime: false,
+            },
+        ]
+    }
+}
+
+fn yes_no(b: bool) -> String {
+    if b { "Yes".to_string() } else { "No".to_string() }
+}
+
+fn detail(label: &str, value: impl Into<String>) -> PluginDetail {
+    PluginDetail { label: label.to_string(), value: value.into() }
+}
+
+fn display_update_source(source: &str, wsus_server: &str) -> String {
+    if source == "wsus" && !wsus_server.is_empty() {
+        format!("WSUS ({wsus_server})")
+    } else {
+        source.replace('_', " ")
+    }
+}
+
+/// One label/value fact about a plugin's configuration, e.g. `("Deadline",
+/// "10 days")` - rendered as a grid of small fields on the plugin's card in
+/// the status window's Plugins page.
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginDetail {
+    pub label: String,
+    pub value: String,
+}
+
+/// Everything the status window's Plugins page needs to render one plugin's
+/// card, derived fresh from `Ns7Config` on every read - see
+/// `Ns7Config::plugin_summaries`.
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginSummary {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub consent: String,
+    pub details: Vec<PluginDetail>,
+    /// Whether "Scan Now" is a real action for this plugin or would just be
+    /// a button that does nothing - see `plugins::run_all`'s doc comment for
+    /// which plugins have a real client-side implementation today.
+    pub has_runtime: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreAppsEvent {
+    CheckStarted,
+    UpdateAvailable,
+    UpdateInstalled,
+    UpdateFailed,
 }
 
 /// Per-user state directory. Replaces the earlier CWD-relative

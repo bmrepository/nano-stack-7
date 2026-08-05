@@ -90,9 +90,10 @@ Write-Host "Building client on $($DevBox.Host) ..." -ForegroundColor Cyan
 Invoke-DevBox $Password "Set-Location $RemoteDir; cargo build -p client 2>&1 | Select-Object -Last 5" -AllowFailure
 Invoke-DevBox $Password "if (-not (Test-Path $RemoteDir/target/debug/client.exe)) { throw 'client.exe was not produced' }"
 
-# The tray helper looks for its icons next to the executable; a plain cargo
-# build doesn't copy them (only the MSI does).
+# The tray helper and notify-helper look for their icons next to the
+# executable; a plain cargo build doesn't copy them (only the MSI does).
 Invoke-DevBox $Password "Copy-Item $RemoteDir/ns7-client/assets/ns7-icon-*.ico $RemoteDir/target/debug/ -Force"
+Invoke-DevBox $Password "Copy-Item $RemoteDir/ns7-client/assets/notify-icon.png $RemoteDir/target/debug/ -Force"
 
 if ($FreshEnrollment) {
     Write-Host "Clearing the dev box's saved client state ..." -ForegroundColor Yellow
